@@ -1,0 +1,16 @@
+# All on-screen text strings, editable without touching code.
+
+stage1:
+  title: "Can an AI discover the Swiss rail network... just by knowing geography?"
+  cost_panel_label: "Network cost"
+  training_label: "Training an RL agent..."
+
+stage2:
+  hold_label: "The agent's learned network"
+  reveal_label: "The real Swiss rail network"
+  fitted_weight_template: >-
+    Fitted slope_weight = {slope_weight:.1f} — the network behaves as if
+    each unit of squared gradient is ~{slope_weight:.0f}x as costly as a
+    metre of flat track.
+  takeaway: "The agent rediscovered the shape of the real network — bending around the Alps just like the engineers did."
+  end_card: "swiss_rail_rl — a reinforcement-learning agent discovers Switzerland's railways"

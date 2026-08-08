@@ -1,0 +1,77 @@
+region:
+  country: "CH"
+  crs_projected: "EPSG:2056"   # Swiss LV95 — projected CRS for metric distances
+
+points:
+  # 'anchors' are must-connect cities; 'intermediate' add interesting choices.
+  # Coordinates in WGS84 lon/lat; the code projects them to crs_projected.
+  anchors:
+    - {name: "Genève", lon: 6.1432, lat: 46.2044}
+    - {name: "Bern",   lon: 7.4474, lat: 46.9480}
+    - {name: "Basel",  lon: 7.5886, lat: 47.5596}
+    - {name: "Zürich", lon: 8.5417, lat: 47.3769}
+  intermediate:
+    - {name: "Lausanne",   lon: 6.6323, lat: 46.5197}
+    - {name: "Luzern",     lon: 8.3093, lat: 47.0502}
+    - {name: "St. Gallen", lon: 9.3767, lat: 47.4245}
+    - {name: "Chur",       lon: 9.5330, lat: 46.8508}
+    - {name: "Brig",       lon: 7.9880, lat: 46.3160}   # Alpine — forces a terrain choice
+    - {name: "Sion",       lon: 7.3590, lat: 46.2330}
+    - {name: "Bellinzona", lon: 9.0240, lat: 46.1950}   # south of the Alps — big terrain gate
+    - {name: "Lugano",     lon: 8.9510, lat: 46.0037}
+    - {name: "Neuchâtel",  lon: 6.9310, lat: 46.9920}
+    - {name: "Fribourg",   lon: 7.1620, lat: 46.8060}
+    - {name: "Winterthur", lon: 8.7290, lat: 47.5000}
+    - {name: "Biel/Bienne",lon: 7.2470, lat: 47.1370}
+    - {name: "Thun",       lon: 7.6280, lat: 46.7580}
+    - {name: "Aarau",      lon: 8.0440, lat: 47.3900}
+    - {name: "Olten",      lon: 7.9040, lat: 47.3500}
+    - {name: "Zug",        lon: 8.5170, lat: 47.1670}
+  # ~20 total. Keep them editable; the whole project must work with any point set.
+
+cost:
+  base_length_weight: 1.0        # cost per metre of horizontal length
+  slope_weight: 50.0             # multiplies the accumulated squared-slope term (TO BE FITTED)
+  slope_exponent: 2.0            # penalty grows as gradient**exponent
+  slope_soft_cap: 0.06           # gradient (6%) beyond which penalty ramps very hard
+  water_surcharge: 5.0           # extra cost per metre crossing a lake/river polygon
+  water_hard_block: false        # if true, water crossings are forbidden instead of surcharged
+  junction_cost: 20000.0         # fixed cost per Steiner junction that is actually used
+  sample_step_m: 250.0           # spacing when sampling elevation along an edge
+
+steiner:
+  max_junctions: 8               # upper bound on added junction points
+  junction_grid: "adaptive"      # "grid" | "adaptive" | "candidate_set"
+  candidate_resolution_km: 15.0  # if grid: spacing of candidate junction positions
+
+rl:
+  algorithm: "PPO"              # PPO recommended; keep swappable
+  total_timesteps: 2_000_000
+  seed: 0
+  n_envs: 8
+  checkpoint_every: 25_000       # also = one logged "frame" of network evolution
+  learning_rate: 3.0e-4
+  gamma: 0.99
+  action_design: "A"             # "A" (discrete) | "B" (continuous junctions) — see env.py
+  max_steps: 60                  # episode step cap
+
+fit:
+  enabled: true
+  method: "cma"                  # "cma" | "grid" | "random"
+  free_params: ["slope_weight", "junction_cost", "water_surcharge"]
+  objective: "network_distance"  # how learned vs real is scored (see fit.py)
+  max_evals: 60
+
+data:
+  elevation_source: "swissALTI3D"    # "swissALTI3D" | "SRTM"
+  rail_source: "swisstlm3d"          # "swisstlm3d" | "osm_hdx"
+  cache_dir: "./data_cache"
+  water_enabled: false                # gate optional lake/river surcharge behind data availability
+
+render:
+  fps: 30
+  resolution: [1080, 1920]           # vertical for Instagram; configurable
+  backend: "matplotlib"              # "matplotlib" for the animation, "manim" for the polished reveal
+  show_elevation_hillshade: true
+  reveal_hold_seconds: 4.0
+  output_path: "./out/swiss_rail_rl.mp4"
