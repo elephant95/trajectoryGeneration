@@ -1,5 +1,15 @@
 """PPO training with per-checkpoint frame logging (§7 of the build spec).
 
+Uses sb3-contrib's MaskablePPO rather than plain PPO. The discrete action
+space (§6 Design A) is mostly *invalid* at any given state — most edges
+already exist or reference an unplaced junction slot — so unmasked PPO
+spends most of its exploration budget on invalid-action penalties instead
+of learning useful edges. Env.action_masks() (env.py) is the single source
+of truth for legality; MaskablePPO restricts sampling to legal actions only,
+which is a large sample-efficiency win for this kind of construction task
+and is a drop-in swap (`rl.algorithm` stays "PPO" conceptually — this is a
+masked variant of it, not a different algorithm).
+
 Every `rl.checkpoint_every` steps we run one greedy (deterministic) rollout
 with the current policy, snapshot `env.current_network()`, and append it to
 `out/frames/frame_XXXXX.json`. That frame stream is exactly what render.py
@@ -36,7 +46,7 @@ def greedy_rollout(model, env: SwissRailEnv, seed: int) -> dict:
     done = False
     n_steps = 0
     while not done and n_steps < env.max_steps + 1:
-        action, _ = model.predict(obs, deterministic=True)
+        action, _ = model.predict(obs, action_masks=env.action_masks(), deterministic=True)
         obs, _reward, terminated, truncated, _info = env.step(int(action))
         done = terminated or truncated
         n_steps += 1
@@ -76,7 +86,7 @@ def bounding_box_from_xy(city_coords: list[XY]):
 
 
 def train(config: Config, cost_oracle: CostOracle, city_coords: list[XY], resume: bool = True) -> Path:
-    from stable_baselines3 import PPO
+    from sb3_contrib import MaskablePPO
     from stable_baselines3.common.monitor import Monitor
     from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -84,7 +94,7 @@ def train(config: Config, cost_oracle: CostOracle, city_coords: list[XY], resume
     frames_dir = out_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "training_log.csv"
-    model_path = out_dir / "ppo_model.zip"
+    model_path = out_dir / "maskable_ppo_model.zip"
 
     baselines = log_baselines(config, cost_oracle, city_coords, out_dir)
 
@@ -95,10 +105,10 @@ def train(config: Config, cost_oracle: CostOracle, city_coords: list[XY], resume
     eval_env = _make_env(config, cost_oracle, city_coords)
 
     if resume and model_path.exists():
-        model = PPO.load(model_path, env=vec_env)
-        logger.info("Resumed PPO model from %s", model_path)
+        model = MaskablePPO.load(model_path, env=vec_env)
+        logger.info("Resumed MaskablePPO model from %s", model_path)
     else:
-        model = PPO(
+        model = MaskablePPO(
             "MlpPolicy",
             vec_env,
             learning_rate=config.rl.learning_rate,

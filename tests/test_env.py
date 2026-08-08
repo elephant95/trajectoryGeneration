@@ -34,3 +34,20 @@ def test_stop_action_terminates_immediately(small_config, flat_oracle):
     obs, reward, terminated, truncated, info = env.step(env.STOP)
     assert terminated
     assert info["connected"] is False  # no edges added yet
+
+
+def test_action_masks_matches_step_validity(small_config, flat_oracle):
+    points = project_points(small_config)
+    city_coords = [(p.x, p.y) for p in points]
+    env = SwissRailEnv(small_config, flat_oracle, city_coords)
+    env.reset(seed=0)
+
+    mask = env.action_masks()
+    assert mask.shape == (env.n_actions,)
+    assert mask[env.STOP]  # STOP always legal
+    assert mask.sum() > 1  # some edges should be addable from a fresh state
+
+    # An edge just added must become illegal (already present) in the next mask.
+    edge_action = next(a for a in range(env.n_candidates, env.STOP) if mask[a])
+    env.step(edge_action)
+    assert not env.action_masks()[edge_action]

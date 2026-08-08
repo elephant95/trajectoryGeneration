@@ -164,6 +164,34 @@ class SwissRailEnv(gym.Env):
         self.step_count = 0
         return self._get_obs(), {}
 
+    def action_masks(self) -> np.ndarray:
+        """Boolean mask over the discrete action space: which actions are legal
+        in the current state. STOP is always legal; a place-junction action is
+        legal iff there's an empty slot and that candidate isn't already placed;
+        an add-edge action is legal iff both endpoints exist and the edge isn't
+        already present. Used both to mask PPO's action distribution (via
+        sb3-contrib's MaskablePPO) and by step() itself as the single source of
+        truth for what counts as an invalid action.
+        """
+        mask = np.zeros(self.n_actions, dtype=bool)
+        mask[self.STOP] = True
+
+        empty_slot_exists = any(not active for active in self.junction_active)
+        if empty_slot_exists:
+            for idx, cand_xy in enumerate(self.candidate_positions):
+                already_placed = any(
+                    self.junction_active[s] and self.junction_positions[s] == cand_xy
+                    for s in range(self.max_junctions)
+                )
+                if not already_placed:
+                    mask[idx] = True
+
+        for idx, (i, j) in enumerate(self._edge_pairs):
+            if self._node_valid(i) and self._node_valid(j) and (i, j) not in self.adjacency:
+                mask[self.n_candidates + idx] = True
+
+        return mask
+
     def step(self, action: int):
         rcfg = self.config.rl
         reward = 0.0
@@ -171,30 +199,24 @@ class SwissRailEnv(gym.Env):
         truncated = False
         info: dict[str, Any] = {}
 
+        valid_mask = self.action_masks()
+
         if action == self.STOP:
             terminated = True
+        elif not valid_mask[action]:
+            reward -= rcfg.invalid_action_penalty
         elif action < self.n_candidates:
             cand_xy = self.candidate_positions[action]
-            empty_slot = next((s for s in range(self.max_junctions) if not self.junction_active[s]), None)
-            already_placed = any(
-                self.junction_active[s] and self.junction_positions[s] == cand_xy
-                for s in range(self.max_junctions)
-            )
-            if empty_slot is None or already_placed:
-                reward -= rcfg.invalid_action_penalty
-            else:
-                self.junction_positions[empty_slot] = cand_xy
-                self.junction_active[empty_slot] = True
+            empty_slot = next(s for s in range(self.max_junctions) if not self.junction_active[s])
+            self.junction_positions[empty_slot] = cand_xy
+            self.junction_active[empty_slot] = True
         else:
             edge_idx = action - self.n_candidates
             i, j = self._edge_pairs[edge_idx]
-            if not (self._node_valid(i) and self._node_valid(j)) or (i, j) in self.adjacency:
-                reward -= rcfg.invalid_action_penalty
-            else:
-                a_xy, b_xy = self._node_xy(i), self._node_xy(j)
-                marginal_cost = self.cost_oracle.edge_cost(a_xy, b_xy)
-                self.adjacency.add((i, j))
-                reward -= marginal_cost * rcfg.reward_scale
+            a_xy, b_xy = self._node_xy(i), self._node_xy(j)
+            marginal_cost = self.cost_oracle.edge_cost(a_xy, b_xy)
+            self.adjacency.add((i, j))
+            reward -= marginal_cost * rcfg.reward_scale
 
         self.step_count += 1
         if not terminated and self.step_count >= self.max_steps:
