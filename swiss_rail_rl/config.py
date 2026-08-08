@@ -67,7 +67,14 @@ class RLConfig(BaseModel):
     max_steps: int = 60
     reward_scale: float = 1.0e-5          # scales -cost into a learning-friendly range
     invalid_action_penalty: float = 1.0   # scaled-reward penalty for a masked/no-op action
-    disconnected_penalty_weight: float = 50.0  # scaled-reward penalty per disconnected component at STOP
+    # Penalty per disconnected component at STOP, expressed as a multiple of the
+    # (scaled) MST-over-cities reference cost — NOT a flat constant. It must
+    # dominate the cost of any achievable connected network or the agent learns
+    # to stay disconnected instead of paying to connect (which is cheaper only
+    # in reward terms, never in what we actually want). Since the MST cost is
+    # an upper bound on the achievable connected cost, a multiplier > 1 for a
+    # single missing component already guarantees connecting is always preferred.
+    disconnected_penalty_weight: float = 3.0
 
 
 class FitConfig(BaseModel):

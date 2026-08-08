@@ -66,6 +66,12 @@ class SwissRailEnv(gym.Env):
         )
         self.n_candidates = len(self.candidate_positions)
 
+        # Reference cost used to scale the disconnected-network penalty (see
+        # config.rl.disconnected_penalty_weight) — the MST is an upper bound
+        # on the achievable connected cost, so scaling off it guarantees
+        # connecting is always preferred over stopping early disconnected.
+        self._mst_cost_scaled = mst.cost * config.rl.reward_scale
+
         self.n_node_slots = self.n_cities + self.max_junctions
         self._edge_pairs: list[tuple[int, int]] = [
             (i, j) for i in range(self.n_node_slots) for j in range(i + 1, self.n_node_slots)
@@ -203,7 +209,7 @@ class SwissRailEnv(gym.Env):
             if connected:
                 reward += -total_cost * rcfg.reward_scale
             else:
-                reward += -rcfg.disconnected_penalty_weight * n_components
+                reward += -rcfg.disconnected_penalty_weight * self._mst_cost_scaled * n_components
 
         return self._get_obs(), reward, terminated, truncated, info
 
