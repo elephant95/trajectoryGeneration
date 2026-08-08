@@ -138,10 +138,32 @@ def _reproject(rail: RailNetwork, dst_crs: str) -> RailNetwork:
     return RailNetwork(lines=MultiLineString(lines), crs=dst_crs, source=rail.source)
 
 
+def _load_local_override(path: str) -> RailNetwork:
+    """Loads a hand-downloaded GeoJSON FeatureCollection (WGS84 lon/lat) of
+    LineString/MultiLineString railway geometries — e.g. swissTLM3D or the
+    OSM Switzerland-Railways export fetched manually and dropped on disk.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    geoms = []
+    for feat in data.get("features", []):
+        geom = feat.get("geometry", {})
+        if geom.get("type") == "LineString":
+            geoms.append(LineString(geom["coordinates"]))
+        elif geom.get("type") == "MultiLineString":
+            geoms.extend(LineString(c) for c in geom["coordinates"])
+    if not geoms:
+        raise ValueError(f"{path} has no LineString/MultiLineString features")
+    return RailNetwork(lines=MultiLineString(geoms), crs="EPSG:4326", source=f"local:{Path(path).name}")
+
+
 def load_rail_network(config: Config, points: list[Point]) -> RailNetwork:
     cache_dir = config.cache_dir()
     cache_path = cache_dir / f"rail_{config.data.rail_source}.geojson"
     dst_crs = config.region.crs_projected
+
+    if config.data.rail_local_path:
+        return _reproject(_load_local_override(config.data.rail_local_path), dst_crs)
 
     if cache_path.exists():
         with open(cache_path, "r", encoding="utf-8") as f:

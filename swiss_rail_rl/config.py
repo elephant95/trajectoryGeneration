@@ -87,6 +87,13 @@ class DataConfig(BaseModel):
     rail_source: Literal["swisstlm3d", "osm_hdx"] = "swisstlm3d"
     cache_dir: str = "./data_cache"
     water_enabled: bool = False
+    # Manual drop-in for real rail geometry when the network sources above
+    # aren't reachable (e.g. a sandboxed environment): point this at a local
+    # GeoJSON FeatureCollection of LineString/MultiLineString geometries in
+    # WGS84 (lon/lat) — e.g. swissTLM3D or the OSM Switzerland-Railways
+    # export, downloaded by hand. Takes priority over both the network fetch
+    # and the offline sketch fallback.
+    rail_local_path: str | None = None
 
 
 class RenderConfig(BaseModel):
