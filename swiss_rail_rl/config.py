@@ -75,6 +75,11 @@ class RLConfig(BaseModel):
     # an upper bound on the achievable connected cost, a multiplier > 1 for a
     # single missing component already guarantees connecting is always preferred.
     disconnected_penalty_weight: float = 3.0
+    ent_coef: float = 0.01           # entropy bonus; without it PPO can collapse to a low-entropy mode
+                                      # before it's found a good policy (observed with 0.0 on this task)
+    normalize_reward: bool = True    # VecNormalize running reward normalization — see train.py; the raw
+                                      # returns here span many orders of magnitude across configs/episodes,
+                                      # which starves the critic (explained_variance stuck at ~0) without it
 
 
 class FitConfig(BaseModel):

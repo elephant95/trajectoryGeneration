@@ -88,20 +88,34 @@ def bounding_box_from_xy(city_coords: list[XY]):
 def train(config: Config, cost_oracle: CostOracle, city_coords: list[XY], resume: bool = True) -> Path:
     from sb3_contrib import MaskablePPO
     from stable_baselines3.common.monitor import Monitor
-    from stable_baselines3.common.vec_env import DummyVecEnv
+    from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
     out_dir = config.out_path()
     frames_dir = out_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "training_log.csv"
     model_path = out_dir / "maskable_ppo_model.zip"
+    vecnorm_path = out_dir / "vecnormalize.pkl"
 
     baselines = log_baselines(config, cost_oracle, city_coords, out_dir)
 
     def _thunk():
         return Monitor(_make_env(config, cost_oracle, city_coords))
 
-    vec_env = DummyVecEnv([_thunk for _ in range(config.rl.n_envs)])
+    raw_vec_env = DummyVecEnv([_thunk for _ in range(config.rl.n_envs)])
+    # Raw episode returns here span orders of magnitude across configs/episodes
+    # (millions to billions before reward_scale, and reward_scale alone can't
+    # fix that within an episode). Unnormalized, the critic never gets a
+    # learnable target — explained_variance stays pinned near 0 no matter how
+    # long training runs. VecNormalize's running reward normalization fixes
+    # that; obs are left alone since env.py already hand-normalizes them.
+    if config.rl.normalize_reward and resume and vecnorm_path.exists():
+        vec_env = VecNormalize.load(str(vecnorm_path), raw_vec_env)
+        logger.info("Resumed VecNormalize stats from %s", vecnorm_path)
+    elif config.rl.normalize_reward:
+        vec_env = VecNormalize(raw_vec_env, norm_obs=False, norm_reward=True, gamma=config.rl.gamma)
+    else:
+        vec_env = raw_vec_env
     eval_env = _make_env(config, cost_oracle, city_coords)
 
     if resume and model_path.exists():
@@ -113,6 +127,7 @@ def train(config: Config, cost_oracle: CostOracle, city_coords: list[XY], resume
             vec_env,
             learning_rate=config.rl.learning_rate,
             gamma=config.rl.gamma,
+            ent_coef=config.rl.ent_coef,
             seed=config.rl.seed,
             verbose=1,
         )
@@ -150,6 +165,8 @@ def train(config: Config, cost_oracle: CostOracle, city_coords: list[XY], resume
             )
             f.flush()
             model.save(model_path)
+            if isinstance(vec_env, VecNormalize):
+                vec_env.save(str(vecnorm_path))
             logger.info(
                 "step=%d cost=%.1f connected=%s n_junctions=%d",
                 int(model.num_timesteps),
