@@ -125,3 +125,10 @@ pytest
 
 Unit tests cover the cost function, the MST/Steiner baselines, and the
 Gymnasium environment — all synthetic/offline, no network or GPU required.
+
+## geoquiz
+
+The repository also holds `geoquiz`, an automated geo-quiz video generator
+(guess the country from its rivers, the city from its streets). It is a
+separate package with its own dependencies and CLI: see
+[`geoquiz/README.md`](geoquiz/README.md).
