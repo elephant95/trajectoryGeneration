@@ -32,7 +32,7 @@ geoquiz render city Amsterdam --features buildings,water --radius-km 1.2 --inges
 
 geoquiz batch geoquiz/examples/batch.yaml      # many Reels from one config, including random picks
 geoquiz list features | styles | countries | cities --in France
-geoquiz resolve city Zürich                    # which provider covers each feature there
+geoquiz resolve country Austria                # which features are ready there, and how to get the rest
 geoquiz inventory                              # what the store holds, and the licences in play
 pytest tests/geoquiz                           # offline, synthetic data
 ```
@@ -88,6 +88,60 @@ seconds (a countdown of 0 skips it), `--size 1080x1920` (any 9:16 size),
 `colors` to override a style's colours and `random` blocks for seeded picks
 of countries or cities. See `examples/batch.yaml`.
 
+## Laser engraving
+
+`geoquiz engrave` (or `--engrave` on `render`) writes pictures for a laser
+engraver, cut exactly to the target's contour: everything inside, nothing
+outside. There is one picture per feature type, one for the contour, and one
+with everything, all on the same canvas so they line up when engraved one
+after another (for example to fill each layer with a different epoxy).
+
+```bash
+geoquiz engrave country CHE --features lakes,roads,rail --width-mm 200
+geoquiz render  country CHE --features lakes,roads,rail --engrave      # video plus an engrave/ folder
+geoquiz engrave city Zürich --features streets,rail,water --width-mm 150 --min-line-mm 0.25
+```
+
+| File | Content |
+| --- | --- |
+| `contour.svg/.png` | the outline only (for a city: the rectangular window) |
+| `<feature>.svg/.png` | one feature type only, e.g. `lakes`, `roads`, `rail` |
+| `all.svg/.png` | everything; in the SVG each layer is a group with its own colour, which laser software such as LightBurn maps to separate layers |
+| `engrave.json` | canvas size in mm, map scale, line widths, colours, credits |
+
+SVGs are in millimetres; PNGs are pure black and white (black = engrave) at
+`--dpi` (508 = 20 pixels per mm). Options: `--width-mm` (canvas width
+including `--margin-mm`), `--min-line-mm` (narrowest line: set it to the
+finest groove you can engrave and fill), `--line-scale`, `--lines outline`
+(default: lines become closed areas as wide as the stroke, which a laser can
+fill-engrave) or `--lines centerline` (single paths for vector scoring),
+`--contour-in-layers`, `--mirror` (for the back of clear material).
+
+## Python
+
+```python
+from geoquiz import GeoQuiz
+gq = GeoQuiz()                                    # data root: ./geoquiz_data
+
+gq.countries(continent="Europe")                  # DataFrame of every country: iso3, name, continent, population
+gq.cities(country="Italy", min_population=200_000)   # DataFrame of every city, largest first
+gq.features("country", "Austria")                 # per feature: ready? from which source? how to get it?
+gq.styles(); gq.settings()                        # style names; every setting with its default
+
+gq.render("country", "Brazil")                                            # rivers and lakes, shape hidden
+gq.render("country", "Austria", features=["roads", "rail"], style="blueprint", reveal="rank")
+gq.render("city", "Paris", features=["streets", "water"], style="ink", budget_km=500,
+          question="Quelle ville|est-ce ?", duration=12)
+gq.render("country", "CHE", features=["lakes", "roads", "rail"], engrave=True, width_mm=200)
+gq.engrave("city", "Zürich", features=["streets", "rail", "water"], width_mm=150)
+gq.batch("geoquiz/examples/batch.yaml")
+gq.ingest("hydrosheds", hydro_regions="all")
+```
+
+`render` and `engrave` download missing data by default
+(`ingest_missing=False` turns that off) and return a dict with the output
+`folder` and everything written to `metadata.json` / `engrave.json`.
+
 ## Data and output
 
 Data lives under `./geoquiz_data` (override with `--data` or `$GEOQUIZ_DATA`):
@@ -117,6 +171,8 @@ behind the video, kept so they can be shared on request as ODbL asks.
 | `puzzles.py` | The puzzle builder: target + features + options -> scene, text and answer. |
 | `auto.py` | `--ingest-missing`: works out and downloads what a puzzle lacks. |
 | `cli.py` | Commands, and the batch runner. |
+| `api.py` | `GeoQuiz`: the same operations as Python calls. |
+| `engrave.py` | Laser-engraving export: per-feature SVG and PNG cut to the contour. |
 | `reel.py` | Timeline and assembly of one puzzle folder. |
 
 Providers: `natural_earth`, `hydrosheds` (HydroRIVERS, HydroLAKES), `osm`

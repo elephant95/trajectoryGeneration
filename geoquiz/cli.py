@@ -8,6 +8,8 @@
     geoquiz render country Brazil
     geoquiz render country Austria --features roads,rail --style blueprint --ingest-missing
     geoquiz render city Paris --features streets,water --style ink --ingest-missing
+    geoquiz engrave country CHE --features lakes,roads,rail --width-mm 200   # laser files, one per feature
+    geoquiz resolve country Austria                  # which features are ready for this place
     geoquiz batch batch.yaml                         # many Reels from one config file
 """
 from __future__ import annotations
@@ -140,15 +142,15 @@ def cmd_list(args) -> int:
 
 
 def cmd_resolve(args) -> int:
-    *_, registry, resolver = _context(args)
-    from .puzzles import LAYERS
-    region = resolver.country(args.key) if args.kind == "country" else resolver.city(args.key)
-    out = {"kind": region.kind.value, "id": region.id, "name": region.name, "country": region.country,
-           "centre_lonlat": region.centre, "crs": region.crs, "population": region.population,
-           "area_km2": round(region.area_km2(), 1), "bbox": region.bbox()}
-    out["features"] = {name: [{"provider": c.provider, "coverage": round(c.coverage, 2), "chosen": c.chosen}
-                              for c in registry.explain(s.feature, region)] for name, s in LAYERS[region.kind].items()}
-    print(json.dumps(out, indent=2, ensure_ascii=False))
+    ctx = _context(args)
+    st = feature_status(ctx, args.kind, args.key, getattr(args, "country", None))
+    region = st["region"]
+    print(f"{region.name} ({region.kind.value}, {region.id})" + (f", {region.country}" if region.kind.value == "city" else "")
+          + (f", population {region.population:,.0f}" if region.population else ""))
+    print(f"  centre {region.centre[1]:.4f}°N {region.centre[0]:.4f}°E, projection {region.crs}")
+    print("  features:")
+    for name, f in st["features"].items():
+        print(f"    {name:<10} {'ready (' + f['source'] + ')' if f['ready'] else 'not in the store — ' + f['get_it_with']}")
     return 0
 
 
@@ -160,13 +162,17 @@ RENDER_DEFAULTS = {
     "radius_km": None, "density": 1.0, "reveal": "auto", "country": None, "question": None, "hint": None,
     "answer": None, "fact": None, "duration": 15.0, "phases": None, "size": "1080x1920", "fps": 30, "zoom": 0.05,
     "crf": 18, "audio": None, "colors": None, "ingest_missing": False,
+    # laser-engraving export (see engrave.py); "engrave" adds it to a rendered Reel's folder
+    "engrave": False, "width_mm": 200.0, "margin_mm": 5.0, "min_line_mm": 0.3, "line_scale": 1.0,
+    "lines": "outline", "contour_mm": 0.4, "contour_in_layers": False, "dpi": 508, "mirror": False,
 }
+ENGRAVE_KEYS = ("width_mm", "margin_mm", "min_line_mm", "line_scale", "lines", "contour_mm", "contour_in_layers",
+                "dpi", "mirror")
 
 
-def render_one(ctx, kind: str, key: str, settings: dict, out: Path, index: int | None = None) -> dict:
-    """Render one puzzle from a settings dict (see RENDER_DEFAULTS)."""
+def _prepare(ctx, kind: str, key: str, settings: dict):
+    """Settings dict -> (merged settings, built puzzle, seconds spent building)."""
     from . import puzzles
-    from .reel import ReelSpec, render_reel
     from .render.style import STYLES, with_overrides
     from .scene import Frame
     paths, _, raw, registry, resolver = ctx
@@ -193,7 +199,22 @@ def render_one(ctx, kind: str, key: str, settings: dict, out: Path, index: int |
         ensure_data(registry, resolver, raw, kind, key, features, s["country"])
     t = time.perf_counter()
     puzzle = puzzles.build_puzzle(registry, resolver, kind, key, features, frame, style, options)
-    build_s = time.perf_counter() - t
+    return s, puzzle, time.perf_counter() - t
+
+
+def _engrave(puzzle, folder: Path, s: dict) -> dict:
+    from .engrave import export_engraving
+    m = export_engraving(puzzle, folder, **{k: s[k] for k in ENGRAVE_KEYS})
+    print(f"{m['folder']}: {m['canvas_mm'][0]:.0f} x {m['canvas_mm'][1]:.0f} mm at {m['scale']}, "
+          f"layers: contour, {', '.join(m['layers'])}, all (SVG + PNG each)")
+    return m
+
+
+def render_one(ctx, kind: str, key: str, settings: dict, out: Path, index: int | None = None) -> dict:
+    """Render one puzzle from a settings dict (see RENDER_DEFAULTS)."""
+    from .reel import ReelSpec, render_reel
+    paths, _, raw, registry, resolver = ctx
+    s, puzzle, build_s = _prepare(ctx, kind, key, settings)
     phases = tuple(float(p) for p in (s["phases"].split(",") if isinstance(s["phases"], str) else s["phases"])) if s["phases"] else None
     spec = ReelSpec(duration=float(s["duration"]), phases=phases, crf=int(s["crf"]), zoom=float(s["zoom"]), audio=s["audio"])
     land = registry.get("natural_earth").land()
@@ -201,7 +222,35 @@ def render_one(ctx, kind: str, key: str, settings: dict, out: Path, index: int |
     tm = meta["timing"]
     print(f"{meta['folder']}: scene {build_s:.1f} s, {meta['video']['frames']} frames in {tm['render_and_encode_s']} s "
           f"({tm['frame_ms_median']} ms/frame), {meta['video']['bytes'] / 1e6:.1f} MB | {meta['attribution']['on_screen']}")
+    if s["engrave"]:
+        meta["engrave"] = _engrave(puzzle, Path(meta["folder"]) / "engrave", s)
     return meta
+
+
+def engrave_one(ctx, kind: str, key: str, settings: dict, out: Path) -> dict:
+    """Engraving files only, no video. Features are thinned for the target itself (as with outside="cut")."""
+    s, puzzle, _ = _prepare(ctx, kind, key, {"outside": "cut", "buffer_km": 2.0, **settings})
+    return _engrave(puzzle, Path(out) / f"{puzzle.slug.rsplit('_', 1)[0]}_engrave", s)
+
+
+def feature_status(ctx, kind: str, key: str, country: str | None = None) -> dict:
+    """For one place: every feature of its mode, whether its data is in the store, and how to get it if not."""
+    from .puzzles import LAYERS
+    from .schema import Feature
+    _, store, _, registry, resolver = ctx
+    region = resolver.country(key) if kind == "country" else resolver.city(key, country)
+    out = {}
+    for name, spec in LAYERS[region.kind].items():
+        choices = registry.explain(spec.feature, region)
+        ready = any(c.coverage > 0 for c in choices)
+        if name == "coast":                      # a landlocked country still has the layer; it is just empty there
+            ready = store.has("natural_earth", Feature.COASTLINE)
+        if name == "borders":
+            ready = store.has("geoboundaries", Feature.ADMIN, f"{region.id}-ADM1")
+        out[name] = {"label": spec.label, "ready": ready,
+                     "source": (next((c.provider for c in choices if c.chosen), None) or choices[0].provider) if ready and choices else None,
+                     "get_it_with": None if ready else "add --ingest-missing, or: " + (spec.ingest_hint or "geoquiz ingest --sources overture --city <name>")}
+    return {"region": region, "features": out}
 
 
 def _settings_from_args(args) -> dict:
@@ -213,6 +262,16 @@ def cmd_render(args) -> int:
     ctx = _context(args)
     try:
         render_one(ctx, args.kind, args.key, _settings_from_args(args), Path(args.out) if args.out else ctx[0].out)
+    except (MissingData, KeyError, ValueError) as e:
+        sys.exit(f"error: {e.args[0] if e.args else e}")
+    return 0
+
+
+def cmd_engrave(args) -> int:
+    from .puzzles import MissingData
+    ctx = _context(args)
+    try:
+        engrave_one(ctx, args.kind, args.key, _settings_from_args(args), Path(args.out) if args.out else ctx[0].out)
     except (MissingData, KeyError, ValueError) as e:
         sys.exit(f"error: {e.args[0] if e.args else e}")
     return 0
@@ -308,9 +367,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=50, help="cities: how many to show")
     p.set_defaults(fn=cmd_list)
 
-    p = sub.add_parser("resolve", help="resolve a country or city and show which providers cover each feature")
+    p = sub.add_parser("resolve", help="for one place: which features are ready, and how to get the others")
     p.add_argument("kind", choices=["country", "city"])
     p.add_argument("key")
+    p.add_argument("--country", help="city: country name, to disambiguate")
     p.set_defaults(fn=cmd_resolve)
 
     def render_opts(p):
@@ -340,13 +400,42 @@ def main(argv: list[str] | None = None) -> int:
         g.add_argument("--zoom", type=float, help="slow push-in over the clip (0.05); 0 turns it off")
         g.add_argument("--crf", type=int, help="x264 quality (18)")
         g.add_argument("--audio", help="music file to embed (looped or cut to length); silent otherwise")
+        g = p.add_argument_group("laser engraving")
+        g.add_argument("--engrave", action="store_true", default=None, help="also write engraving files into the Reel's folder")
+        engrave_opts(g)
         p.add_argument("--out", help="output directory (default: <data>/out)")
+
+    def engrave_opts(g):
+        g.add_argument("--width-mm", type=float, help="canvas width including margins (200)")
+        g.add_argument("--margin-mm", type=float, help="blank margin around the contour (5)")
+        g.add_argument("--min-line-mm", type=float, help="narrowest line (0.3): the finest groove you can engrave and fill")
+        g.add_argument("--line-scale", type=float, help="multiply all line widths (1.0)")
+        g.add_argument("--lines", choices=["outline", "centerline"], help="outline (default): lines as fillable areas; "
+                                                                          "centerline: single paths for scoring")
+        g.add_argument("--contour-mm", type=float, help="width of the contour line (0.4)")
+        g.add_argument("--contour-in-layers", action="store_true", default=None, help="draw the contour in every layer file too")
+        g.add_argument("--dpi", type=int, help="PNG resolution (508 = 20 pixels per mm)")
+        g.add_argument("--mirror", action="store_true", default=None, help="flip left-right (engraving the back of clear material)")
 
     p = sub.add_parser("render", help="render one Reel")
     p.add_argument("kind", choices=["country", "city"])
     p.add_argument("key", help="country name or ISO3 code, or city name")
     render_opts(p)
     p.set_defaults(fn=cmd_render)
+
+    p = sub.add_parser("engrave", help="laser-engraving files only: one picture per feature, cut to the contour")
+    p.add_argument("kind", choices=["country", "city"])
+    p.add_argument("key", help="country name or ISO3 code, or city name")
+    g = p.add_argument_group("what to draw")
+    g.add_argument("--features", help="comma list (see `geoquiz list features`)")
+    g.add_argument("--density", type=float, help="country: multiply the amount of detail (0.5 sparser, 2 denser)")
+    g.add_argument("--ingest-missing", action="store_true", default=None, help="download data the store lacks for this target")
+    g.add_argument("--budget-km", type=float, help="city: km of streets the window holds (350)")
+    g.add_argument("--radius-km", type=float, help="city: fixed half-width of the window")
+    g.add_argument("--country", help="city: country name, to disambiguate")
+    engrave_opts(p.add_argument_group("engraving"))
+    p.add_argument("--out", help="output directory (default: <data>/out)")
+    p.set_defaults(fn=cmd_engrave)
 
     p = sub.add_parser("spike", help="phase 0: Switzerland's rivers and Zürich's streets")
     render_opts(p)

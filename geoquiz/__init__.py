@@ -5,3 +5,10 @@ store -> resolve a region -> build a scene -> render a Reel.
 """
 
 __version__ = "0.1.0"
+
+
+def __getattr__(name):          # lazy: importing the package stays cheap
+    if name == "GeoQuiz":
+        from .api import GeoQuiz
+        return GeoQuiz
+    raise AttributeError(name)

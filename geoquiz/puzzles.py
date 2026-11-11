@@ -109,6 +109,8 @@ class Puzzle:
     accent: tuple[float, float, float]
     gain: np.ndarray | None      # (H, W) brightness mask: soft edges, dimming outside the target
     extracts: dict[str, gpd.GeoDataFrame] = field(default_factory=dict)   # the clipped layers that were drawn
+    sizes: dict[str, np.ndarray] = field(default_factory=dict)   # per layer, per feature: stroke width or dot
+    #                                                              radius in frame pixels (absent for fills)
     params: dict = field(default_factory=dict)
     answer: dict = field(default_factory=dict)
 
@@ -375,7 +377,7 @@ def build_puzzle(registry: ProviderRegistry, resolver: RegionResolver, kind: str
     lod = _lod_for(view)
 
     # ---- fetch and project every requested layer -------------------------------------------
-    built, sources, extracts, missing = [], [], {}, []
+    built, sources, extracts, sizes, missing = [], [], {}, {}, []
     for name in features:
         spec = specs_all[name]
         choices = registry.explain(spec.feature, region)
@@ -401,6 +403,8 @@ def build_puzzle(registry: ProviderRegistry, resolver: RegionResolver, kind: str
         built.append(item)
         sources += _source_record(name, item["gdf"], choices)
         extracts[name] = item["gdf"]
+        if "size" in item:
+            sizes[name] = item["size"]
     if missing and (explicit or len(missing) == len(features)):
         hints = "; ".join(f"{m}: {specs_all[m].ingest_hint or 'not in the store'}" for m in missing)
         raise MissingData(f"no data for {', '.join(missing)} in {region.name}. To get it — {hints}")
@@ -480,7 +484,7 @@ def build_puzzle(registry: ProviderRegistry, resolver: RegionResolver, kind: str
     target_id = region.id if scale is Scale.COUNTRY else region.name.replace(" ", "-").replace("/", "-")
     return Puzzle(
         slug=f"{target_id}_{'-'.join(drawn)}_{style.name}", feature="+".join(drawn), scene=scene, texts=texts,
-        style=style, accent=style.accent(spec.feature), gain=gain, extracts=extracts,
+        style=style, accent=style.accent(spec.feature), gain=gain, extracts=extracts, sizes=sizes,
         params={"features": drawn, "outside": options.outside, "padding": options.padding,
                 "buffer_km": options.buffer_km, "budget_km": options.budget_km, "radius_km": options.radius_km,
                 "density": options.density, "reveal": options.reveal, "lod": int(lod),
@@ -521,8 +525,9 @@ def _project(spec: LayerSpec, gdf, region: Region, view: View, frame: Frame, opt
             return None
         gdf, pts = gdf[keep].reset_index(drop=True), pts[keep]
         rank = gdf["rank"].to_numpy()
-        xy, start = _circles(view.px(pts), (2.2 + 10.0 * rank ** 1.3) * u)
-        return {"spec": spec, "gdf": gdf, "xy_px": xy, "start": start, "ring_poly": np.arange(len(gdf)),
+        radius = (2.2 + 10.0 * rank ** 1.3) * u
+        xy, start = _circles(view.px(pts), radius)
+        return {"spec": spec, "gdf": gdf, "size": radius, "xy_px": xy, "start": start, "ring_poly": np.arange(len(gdf)),
                 "n": len(gdf), "centres_m": pts, "rank": rank}
     if spec.geom == "fill":
         xy_m, start, ring_poly, row = project_polygons(gdf, region, view, frame)
@@ -578,8 +583,8 @@ def _project(spec: LayerSpec, gdf, region: Region, view: View, frame: Frame, opt
     rank = gdf["rank"].to_numpy()
     if spec.budget_px and len(rank) > 1 and rank.max() > rank.min():      # spread widths over what is actually drawn
         rank = (rank - rank.min()) / (rank.max() - rank.min())
-    width = stroke_widths(rank[row], spec.widths[0] * u, spec.widths[1] * u, spec.gamma)
-    return {"spec": spec, "gdf": gdf, "xy_m": xy_m, "start": start, "row": row, "width": width}
+    size = stroke_widths(rank, spec.widths[0] * u, spec.widths[1] * u, spec.gamma)
+    return {"spec": spec, "gdf": gdf, "xy_m": xy_m, "start": start, "row": row, "width": size[row], "size": size}
 
 
 def _fact(primary: dict, scale: Scale, region: Region, outline, area_m) -> tuple[dict, str]:
