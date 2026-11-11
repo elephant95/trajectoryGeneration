@@ -46,4 +46,7 @@ class GhslProvider(StoreProvider):
         self.save_licence(self.name, self.licence)
 
     def urban_centres(self):
+        if not self.store.has(self.name, Feature.URBAN_CENTRE):
+            raise ValueError("The GHSL city list is not in the data store yet. Run: geoquiz ingest --sources ghsl "
+                             "(a 310 MB download; or use ingest_missing=True / --ingest-missing)")
         return self.store.read(self.name, Feature.URBAN_CENTRE)

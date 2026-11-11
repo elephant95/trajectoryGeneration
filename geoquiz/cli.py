@@ -123,8 +123,10 @@ def cmd_list(args) -> int:
         for s in STYLES.values():
             print(f"{s.name:<10} {'light ink on dark' if s.mode == 'add' else 'dark ink on paper'}")
     else:
-        *_, registry, resolver = _context(args)
+        _, _, raw, registry, resolver = _context(args)
+        from .auto import ensure_basics
         from .regions import fold
+        ensure_basics(registry, raw, cities=args.what == "cities")
         if args.what == "countries":
             t = registry.get("natural_earth").countries()
             if args.in_:
@@ -142,7 +144,9 @@ def cmd_list(args) -> int:
 
 
 def cmd_resolve(args) -> int:
+    from .auto import ensure_basics
     ctx = _context(args)
+    ensure_basics(ctx[3], ctx[2], cities=args.kind == "city")
     st = feature_status(ctx, args.kind, args.key, getattr(args, "country", None))
     region = st["region"]
     print(f"{region.name} ({region.kind.value}, {region.id})" + (f", {region.country}" if region.kind.value == "city" else "")

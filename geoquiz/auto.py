@@ -6,6 +6,7 @@ frame) and then renders from the local store as usual.
 """
 from __future__ import annotations
 
+from .assets import ingest_flags
 from .ingest import RawCache
 from .providers.base import ProviderRegistry
 from .providers.overture import COUNTRY_PREFIX, MAJOR_ROADS
@@ -24,6 +25,29 @@ def partition_name(text: str) -> str:
     return fold(text).replace(" ", "-").replace("/", "-")
 
 
+def ensure_basics(registry: ProviderRegistry, raw: RawCache, cities: bool = False, log=print) -> list[str]:
+    """The data every puzzle needs: countries and flags, and for city work the GHSL city list."""
+    done = []
+    store = registry.get("natural_earth").store
+    if not store.has("natural_earth", Feature.COUNTRY):
+        log("first use: downloading Natural Earth (countries, coastline, about 15 MB) …")
+        registry.get("natural_earth").ingest(raw)
+        done.append("natural_earth")
+    if not (raw.root / "flag_icons" / "4x3").exists():
+        try:
+            ingest_flags(raw)
+            done.append("flags")
+        except Exception as e:                       # flags are decoration: never block a puzzle on them
+            log(f"could not download flags ({e}); answer cards will have no flag")
+    if cities and not store.has("ghsl", Feature.URBAN_CENTRE):
+        log("first use: downloading the GHSL city list (about 310 MB, once) …")
+        registry.get("ghsl").ingest(raw)
+        done.append("ghsl")
+    if done:
+        registry.forget_coverage()
+    return done
+
+
 def ensure_data(registry: ProviderRegistry, resolver: RegionResolver, raw: RawCache, kind: str, key: str,
                 features: tuple[str, ...] | None = None, country: str | None = None, log=print) -> list[str]:
     """Ingest what is missing for this puzzle. Returns a description of each download made."""
@@ -31,16 +55,8 @@ def ensure_data(registry: ProviderRegistry, resolver: RegionResolver, raw: RawCa
     features = tuple(features) if features else DEFAULT_FEATURES[scale]
     specs = LAYERS[scale]
     done = []
+    done += ensure_basics(registry, raw, cities=scale is Scale.CITY or "cities" in features, log=log)
     store = registry.get("natural_earth").store
-    if not store.has("natural_earth", Feature.COUNTRY):
-        log("ingesting Natural Earth …")
-        registry.get("natural_earth").ingest(raw)
-        done.append("natural_earth")
-    if scale is Scale.CITY or "cities" in features:
-        if not store.has("ghsl", Feature.URBAN_CENTRE):
-            log("ingesting GHSL urban centres …")
-            registry.get("ghsl").ingest(raw)
-            done.append("ghsl")
     region = resolver.country(key) if scale is Scale.COUNTRY else resolver.city(key, country)
 
     def lacking(name: str) -> bool:

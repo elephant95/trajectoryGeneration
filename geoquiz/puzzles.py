@@ -406,8 +406,13 @@ def build_puzzle(registry: ProviderRegistry, resolver: RegionResolver, kind: str
         if "size" in item:
             sizes[name] = item["size"]
     if missing and (explicit or len(missing) == len(features)):
-        hints = "; ".join(f"{m}: {specs_all[m].ingest_hint or 'not in the store'}" for m in missing)
-        raise MissingData(f"no data for {', '.join(missing)} in {region.name}. To get it — {hints}")
+        def why(m: str) -> str:
+            stored = any(p.store.partitions(p.name, specs_all[m].feature)
+                         for p in registry.candidates(specs_all[m].feature, scale) if hasattr(p, "store"))
+            if stored:
+                return f"{m}: none found there (the data is in the store; this place may simply have none, or needs its own download: {specs_all[m].ingest_hint or 'see geoquiz list features'})"
+            return f"{m}: not downloaded yet — {specs_all[m].ingest_hint or 'not in the store'}"
+        raise MissingData(f"no data for {', '.join(missing)} in {region.name}. " + "; ".join(why(m) for m in missing))
 
     # ---- reveal times: the primary feature leads, the rest follow it ---------------------------
     primary = built[0]

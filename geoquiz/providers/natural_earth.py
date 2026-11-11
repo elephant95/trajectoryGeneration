@@ -68,6 +68,9 @@ class NaturalEarthProvider(StoreProvider):
         self.save_licence(self.name, self.licence)
 
     def countries(self, lod: LOD = LOD.MEDIUM):
+        if not self.store.has(self.name, Feature.COUNTRY):
+            raise ValueError("Natural Earth is not in the data store yet. Run: geoquiz ingest --sources natural_earth,flags "
+                             "(or use ingest_missing=True / --ingest-missing)")
         return self.store.read(self.name, Feature.COUNTRY, lod=lod)
 
     def land(self):

@@ -94,3 +94,14 @@ def test_python_interface(store, tmp_path):
     assert (tmp_path / "SQL_rivers-lakes_neon" / "engrave" / "lakes.png").exists() and meta["engrave"]["canvas_mm"][0] == 60
     with pytest.raises(ValueError, match="unknown settings"):
         gq.render("country", "SQL", ingest_missing=False, colour="red")
+
+
+def test_empty_store_says_what_to_do(tmp_path):
+    from geoquiz.providers import default_registry
+    from geoquiz.regions import RegionResolver
+    from geoquiz.store import FeatureStore
+    resolver = RegionResolver(default_registry(FeatureStore(tmp_path / "store")))
+    with pytest.raises(ValueError, match="geoquiz ingest --sources natural_earth"):
+        resolver.country("CHE")
+    with pytest.raises(ValueError, match="geoquiz ingest --sources ghsl"):
+        resolver.city("Zürich")

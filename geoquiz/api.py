@@ -25,9 +25,14 @@ class GeoQuiz:
         self._ctx = cli._context(argparse.Namespace(data=str(data) if data else None))
         self.paths, self.store, self.raw, self.registry, self.resolver = self._ctx
 
+    def _basics(self, cities: bool = False) -> None:
+        from .auto import ensure_basics
+        ensure_basics(self.registry, self.raw, cities=cities)
+
     # -- what exists ------------------------------------------------------------------
     def countries(self, continent: str | None = None) -> pd.DataFrame:
-        """Every country that can be a target."""
+        """Every country that can be a target. Downloads the country list on first use."""
+        self._basics()
         t = self.registry.get("natural_earth").countries()
         if continent:
             t = t[t["x_continent"].map(fold) == fold(continent)]
@@ -35,7 +40,9 @@ class GeoQuiz:
                              "population": t["x_pop"]}).sort_values("name").reset_index(drop=True)
 
     def cities(self, country: str | None = None, min_population: float = 0) -> pd.DataFrame:
-        """Every city that can be a target (GHSL urban centres), largest first."""
+        """Every city that can be a target (GHSL urban centres), largest first.
+        Downloads the city list (about 310 MB) on first use."""
+        self._basics(cities=True)
         t = self.registry.get("ghsl").urban_centres()
         if country:
             t = t[t["x_country"].map(fold) == fold(country)]
@@ -45,6 +52,7 @@ class GeoQuiz:
 
     def features(self, kind: str, target: str, country: str | None = None) -> pd.DataFrame:
         """The features this place supports: whether each is in the store, and how to get it if not."""
+        self._basics(cities=kind == "city")
         st = cli.feature_status(self._ctx, kind, target, country)["features"]
         return pd.DataFrame([{"feature": k, **v} for k, v in st.items()])
 
