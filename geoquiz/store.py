@@ -51,14 +51,15 @@ class FeatureStore:
             written.append(p)
         return written
 
-    def read(self, source: str, feature: Feature, partition: str | None = None, lod: LOD = LOD.FULL,
+    def read(self, source: str, feature: Feature, partition: str | list[str] | None = None, lod: LOD = LOD.FULL,
              bbox: tuple[float, float, float, float] | None = None) -> gpd.GeoDataFrame:
-        """Read one partition, or every partition when ``partition`` is None.
+        """Read one partition, a list of partitions, or every partition when ``partition`` is None.
 
         ``bbox`` is (west, south, east, north) in degrees. Falls back to the
         nearest finer LOD when the requested one was not written.
         """
-        parts = [partition] if partition else self.partitions(source, feature)
+        parts = ([partition] if isinstance(partition, str) else list(partition) if partition is not None
+                 else self.partitions(source, feature))
         frames = []
         for part in parts:
             p = next((self.path(source, feature, part, LOD(l)) for l in range(int(lod), -1, -1)

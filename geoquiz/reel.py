@@ -27,10 +27,15 @@ from .render.reveal import build_stack, compose
 
 @dataclass(frozen=True)
 class ReelSpec:
-    duration: float = 15.0
+    duration: float = 15.0      # total length; the phases scale with it unless ``phases`` is set
+    phases: tuple[float, float, float, float] | None = None   # seconds of reveal, countdown, answer, outro
     crf: int = 18
     preset: str = "medium"
     zoom: float = 0.05          # slow push-in over the clip, as a fraction of the frame
+    audio: str | None = None    # path to a music file to embed; silent track otherwise
+
+    def timeline(self) -> Timeline:
+        return Timeline.from_phases(*self.phases) if self.phases else Timeline.for_duration(self.duration)
 
 
 def _background(frame, style) -> np.ndarray:
@@ -55,12 +60,13 @@ def render_reel(puzzle: Puzzle, out_dir: Path, raw_root: Path | None = None, lan
     """Render ``puzzle`` into ``out_dir/<slug>/``; returns the metadata that was written."""
     t_start = time.perf_counter()
     scene, style, frame = puzzle.scene, puzzle.style, puzzle.scene.frame
-    tl = Timeline.for_duration(spec.duration)
+    tl = spec.timeline()
+    invert = style.mode == "subtract"
     folder = Path(out_dir) / (f"{index:04d}_{puzzle.slug}" if index is not None else puzzle.slug)
     folder.mkdir(parents=True, exist_ok=True)
 
-    stack = build_stack(frame, scene.layers, style.fade, style.head, puzzle.gain)
-    answer_stack = build_stack(frame, scene.answer_layers, 0.03, style.head) if scene.answer_layers else None
+    stack = build_stack(frame, scene.layers, style.fade, style.head, puzzle.gain, invert=invert)
+    answer_stack = build_stack(frame, scene.answer_layers, 0.03, style.head, invert=invert) if scene.answer_layers else None
     bg = _background(frame, style)
     globe = render_globe(land, *scene.region.centre, 118, style, puzzle.accent) if land is not None and len(land) else None
     flag = flag_svg(raw_root, puzzle.answer.get("iso_a2")) if raw_root else None
@@ -71,11 +77,12 @@ def render_reel(puzzle: Puzzle, out_dir: Path, raw_root: Path | None = None, lan
     rgba[..., 3] = 255
     surface = skia.Surface(rgba)                  # shares memory with ``rgba``
     canvas = surface.getCanvas()
-    n_frames = int(round(spec.duration * frame.fps))
+    n_frames = int(round(tl.duration * frame.fps))
     cover_at = int(tl.reveal_end * frame.fps) + 1
     frame_ms, moving = [], []
     t_frames = time.perf_counter()
-    with VideoWriter(folder / "video.mp4", frame, crf=spec.crf, preset=spec.preset) as video:
+    with VideoWriter(folder / "video.mp4", frame, crf=spec.crf, preset=spec.preset,
+                     audio=Path(spec.audio) if spec.audio else None) as video:
         for i in range(n_frames):
             t0 = time.perf_counter()
             t = i / frame.fps
@@ -85,7 +92,7 @@ def render_reel(puzzle: Puzzle, out_dir: Path, raw_root: Path | None = None, lan
             if answer_stack is not None and t >= tl.countdown_end:
                 pa = min((t - tl.countdown_end) / 1.4, 1.0) * answer_stack.end
                 ink = cv2.add(ink, answer_stack.frame(pa))
-            img = compose(ink, bg, style.glow_near, style.glow_far)
+            img = compose(ink, bg, style.glow_near, style.glow_far, style.mode)
             if t > tl.answer_end:                 # outro: the map fades so the clip loops into its first frame
                 o = min((t - tl.answer_end) / ((tl.duration - tl.answer_end) * 0.6), 1.0)
                 img = cv2.addWeighted(img, 1 - o, bg, o, 0)
@@ -138,7 +145,7 @@ def render_reel(puzzle: Puzzle, out_dir: Path, raw_root: Path | None = None, lan
         "qc": {**scene.stats, "ink_fraction": round(stack.ink_fraction, 4),
                "moving_fraction_peak": round(float(max(moving)), 4)},
         "video": {"file": "video.mp4", "width": frame.width, "height": frame.height, "fps": frame.fps,
-                  "frames": n_frames, "duration_s": spec.duration, "bytes": (folder / "video.mp4").stat().st_size},
+                  "frames": n_frames, "duration_s": tl.duration, "bytes": (folder / "video.mp4").stat().st_size},
         "timing": {"setup_s": round(t_setup, 2), "render_and_encode_s": round(t_frames, 2), "total_s": round(t_total, 2),
                    "frame_ms_median": round(float(np.median(frame_ms)), 1)},
     }

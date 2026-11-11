@@ -4,9 +4,8 @@ Automated geo-quiz Reels: "which country is this, from its rivers?", "which
 city is this, from its streets?". An offline Python pipeline on pre-downloaded
 open data, rendered with Skia + NumPy/OpenCV and encoded with FFmpeg.
 
-This package covers **phase 0** (two finished test Reels) and **phase 1**
-(provider adapters, GeoParquet store, region resolver, per-layer licence
-metadata) of the research report's roadmap. It is independent of
+It covers phases 0 and 1 of the research report's roadmap (the data
+foundation and the renderer) plus a general puzzle builder and a batch runner. It is independent of
 `swiss_rail_rl` and shares only the repository.
 
 ## Install
@@ -22,29 +21,84 @@ Display fonts when installed and falls back to the system default otherwise.
 ## Run
 
 ```bash
-geoquiz ingest                                         # Natural Earth, HydroSHEDS (Europe), GHSL, flags
-geoquiz ingest --sources geoboundaries --country CHE   # prints each boundary's own licence
-geoquiz ingest --sources osm --osm-extract europe/switzerland    # Geofabrik extract
-geoquiz ingest --sources overture --city Zürich        # alternative to an OSM extract, one city at a time
+geoquiz ingest                                 # Natural Earth, HydroSHEDS (Europe), GHSL, flags
+geoquiz ingest --sources hydrosheds --hydro-regions all    # rivers and lakes for every continent (~2.5 GB stored)
 
-geoquiz inventory                 # what the store holds, and the licences in play
-geoquiz resolve city Zürich       # region, projection, and which provider covers each feature
-geoquiz render country CHE        # one Reel
-geoquiz render city Zürich --budget-km 350
-geoquiz spike                     # phase 0: both of the above
-pytest tests/geoquiz              # offline, synthetic data
+geoquiz render country Brazil                               # rivers and lakes, shape hidden until the answer
+geoquiz render country Austria --features roads,rail --style blueprint --ingest-missing
+geoquiz render country Japan --features cities,coast --style ember
+geoquiz render city Paris --features streets,water --style ink --ingest-missing
+geoquiz render city Amsterdam --features buildings,water --radius-km 1.2 --ingest-missing
+
+geoquiz batch geoquiz/examples/batch.yaml      # many Reels from one config, including random picks
+geoquiz list features | styles | countries | cities --in France
+geoquiz resolve city Zürich                    # which provider covers each feature there
+geoquiz inventory                              # what the store holds, and the licences in play
+pytest tests/geoquiz                           # offline, synthetic data
 ```
+
+`--ingest-missing` downloads what a puzzle needs and the store lacks, once
+per target; rendering itself only reads the local store.
+
+## Inputs
+
+**Target.** `country <name or ISO3>` (any Natural Earth country) or
+`city <name>` (any of 11,422 GHSL urban centres, roughly every city above
+50,000 people; add `--country` to disambiguate).
+
+**Features** (`--features a,b,c`, the first is the primary one: it drives the
+reveal, the accent colour and the fact).
+
+| Mode | Feature | Source | Notes |
+| --- | --- | --- | --- |
+| country | `rivers`, `lakes` (default) | HydroRIVERS, HydroLAKES | thinned evenly across the frame to a stroke budget |
+| country | `roads`, `rail` | Overture (or an OSM extract) | main road classes only; whole-country download |
+| country | `coast` | Natural Earth | gives the shape away for islands and peninsulas |
+| country | `borders` | geoBoundaries ADM1 | each country's own licence is credited |
+| country | `cities` | GHSL | dots sized by population |
+| city | `streets`, `rail`, `water`, `waterways` (default) | Overture or OSM | |
+| city | `buildings` | Overture or OSM | figure-ground look; best with `--radius-km` 1–2 |
+
+**Framing.**
+
+- `--outside keep` (default, country): a square frame filled with the
+  feature at full strength, neighbours included, so the silhouette is not
+  visible; the border is drawn only in the answer. `dim` darkens everything
+  beyond the border, `cut` removes it (easiest).
+- `--padding 0.12` (country): how much surrounding area to show.
+- `--budget-km 350` (city): the window grows until it holds this much
+  street. `--radius-km` fixes its half-width instead.
+- `--density 1.0` (country): multiplies the stroke budget.
+
+**Look and motion.** `--style neon|ink|blueprint|ember|mono`;
+`--reveal auto|network|rank|radial|sweep` (auto: rivers grow upstream from
+where they leave the frame, networks grow outward along themselves, the rest
+radially; `rank` draws the most important features first; `sweep` runs west
+to east). Secondary features appear when the primary one reaches them.
+
+**Text.** `--question "line one|line two"`, `--hint`, `--answer` (display
+name), `--fact`. Defaults are generated; the fact is computed from the data
+drawn.
+
+**Video.** `--duration 15` or `--phases reveal,countdown,answer,outro` in
+seconds (a countdown of 0 skips it), `--size 1080x1920` (any 9:16 size),
+`--fps`, `--zoom`, `--crf`, `--audio music.mp3`.
+
+**Batch file.** The same names as keys, per puzzle or under `defaults`, plus
+`colors` to override a style's colours and `random` blocks for seeded picks
+of countries or cities. See `examples/batch.yaml`.
+
+## Data and output
 
 Data lives under `./geoquiz_data` (override with `--data` or `$GEOQUIZ_DATA`):
 `raw/` holds downloads and `manifest.json` (URL, SHA-256, size, date per
-file), `store/` the normalised GeoParquet, `out/` one folder per puzzle. The
-default ingest downloads about 1.2 GB, most of it HydroLAKES.
+file), `store/` the normalised GeoParquet, `out/` one folder per puzzle.
 
-Each puzzle folder holds `video.mp4` (1080 × 1920, 30 fps, H.264, yuv420p,
-AAC, moov atom first), `cover.jpg`, `caption.txt` (with full credits),
-`answer.json`, `metadata.json` (target ids, parameters and their hash, data
-versions, licences, QC metrics, timings) and `data/*.parquet`, the clipped
-layers behind the video, kept so they can be shared on request as ODbL asks.
+Each puzzle folder holds `video.mp4` (H.264, yuv420p, AAC, moov atom first),
+`cover.jpg`, `caption.txt` (with full credits), `answer.json`,
+`metadata.json` (target ids, parameters and their hash, data versions,
+licences, QC metrics, timings) and `data/*.parquet`, the clipped layers
+behind the video, kept so they can be shared on request as ODbL asks.
 
 ## How it fits together
 
@@ -60,13 +114,34 @@ layers behind the video, kept so they can be shared on request as ODbL asks.
 | `render/reveal.py` | The reveal engine: one crisp Skia render plus a per-pixel reveal-time map; each frame only touches pixels in transition. |
 | `render/overlay.py` | Question, countdown, answer card (flag, locator globe, typed name, fact), credit line. |
 | `render/encode.py` | FFmpeg pipe in the Reels format. |
-| `puzzles.py` | The two puzzle builders: `country_rivers`, `city_streets`. |
+| `puzzles.py` | The puzzle builder: target + features + options -> scene, text and answer. |
+| `auto.py` | `--ingest-missing`: works out and downloads what a puzzle lacks. |
+| `cli.py` | Commands, and the batch runner. |
 | `reel.py` | Timeline and assembly of one puzzle folder. |
 
 Providers: `natural_earth`, `hydrosheds` (HydroRIVERS, HydroLAKES), `osm`
 (Geofabrik PBF via pyosmium), `geoboundaries`, `ghsl`, and `overture` (roads,
 rail and water by bounding box from the Overture cloud release; the fallback
 for city features where no OSM extract is ingested).
+
+## Limits to know about
+
+- **OSM extracts from Geofabrik are untested at country size**: the host was
+  unreachable where this was built. City and country OSM-derived data
+  therefore came from Overture, which worked for every target tried.
+- **Country roads and rail are slow for very large countries**: the Overture
+  read scans the whole bounding box (Austria takes seconds, India's rail
+  about a minute; the USA or Russia will take much longer).
+- **Neighbours appear only where data is in the store.** Rivers, lakes, coast
+  and cities are global once ingested; roads, rail and borders are per
+  country, and `--ingest-missing` fetches roads and rail for the whole frame
+  but borders only for the target.
+- **Countries that cross the antimeridian** (Russia, Fiji) and overseas
+  territories are not handled specially; far-away parts are dropped.
+- **Layouts are designed for 9:16.** Other aspect ratios will render but
+  text and map may collide.
+- **No quality gates yet**: nothing rejects a puzzle that is too sparse,
+  too generic or too easy.
 
 ## Design notes
 
@@ -77,14 +152,15 @@ for city features where no OSM extract is ingested).
 - **City centre and window.** The centre is the densest part of the street
   layer inside the GHSL urban centre; the window grows until it holds the
   street budget. Administrative outlines are not used.
-- **Difficulty knob (country mode).** `--outside dim` keeps rivers beyond the
-  border at 25 % brightness so the silhouette stays hidden; `--outside cut`
-  removes them.
+- **Even density.** Country rivers are thinned per grid cell, most important
+  first, so wet and dry regions get the same amount of ink; road networks
+  are thinned by whole class so they stay connected.
 - **Thresholds are starting values.** Reference densities for provider
   coverage, the street budget, rank cut-offs and stroke widths are estimates
   to tune once a planner produces many candidates.
 
 ## Not built yet
 
-Planner and quality gates, difficulty scoring, batch config and registry
-table, more features and styles, music, and publishing (roadmap phases 2–5).
+Quality gates, difficulty scoring, the puzzle registry and duplicate
+prevention, terrain features (elevation, glaciers, mountain ranges), 3D, and
+publishing.

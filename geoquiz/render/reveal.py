@@ -33,13 +33,17 @@ def _path_for(xy: np.ndarray, starts, ends, close: bool = False) -> skia.Path:
     return path
 
 
-def draw_layers(frame: Frame, layers: list) -> np.ndarray:
-    """Draw layers back to front; returns premultiplied RGBA uint8 (H, W, 4)."""
+def draw_layers(frame: Frame, layers: list, invert: bool = False) -> np.ndarray:
+    """Draw layers back to front; returns premultiplied RGBA uint8 (H, W, 4).
+
+    With ``invert`` each layer is drawn in its complementary colour: the image
+    is then how much light the ink takes away from a light background.
+    """
     surface = skia.Surface(frame.width, frame.height)
     canvas = surface.getCanvas()
     canvas.clear(skia.ColorTRANSPARENT)
     for layer in layers:
-        r, g, b = layer.color
+        r, g, b = (1 - c for c in layer.color) if invert else layer.color
         paint = skia.Paint(AntiAlias=True, Color4f=skia.Color4f(r, g, b, layer.opacity))
         if isinstance(layer, FillLayer):
             path = _path_for(layer.xy, layer.ring_start[:-1], layer.ring_start[1:], close=True)
@@ -159,21 +163,31 @@ class RevealStack:
         return float(k2 - k1) / (self.shape[0] * self.shape[1])
 
 
-def build_stack(frame: Frame, layers: list, fade: float, head: float, gain: np.ndarray | None = None) -> RevealStack:
+def build_stack(frame: Frame, layers: list, fade: float, head: float, gain: np.ndarray | None = None,
+                invert: bool = False) -> RevealStack:
     """Rasterise layers into a RevealStack. ``gain`` (H, W) in 0..1 dims the image (soft edges, outside-dimming)."""
-    rgba = draw_layers(frame, layers)
+    rgba = draw_layers(frame, layers, invert=invert)
     if gain is not None:
         rgba = (rgba.astype(np.float32) * gain[..., None]).astype(np.uint8)
     return RevealStack(rgba, time_map(frame, layers), fade=fade, head=head)
 
 
-def compose(ink: np.ndarray, background: np.ndarray, glow_near: float, glow_far: float) -> np.ndarray:
-    """Neon composite: background + crisp ink + two blurred copies, blurred at reduced resolution."""
+def compose(ink: np.ndarray, background: np.ndarray, glow_near: float, glow_far: float, mode: str = "add") -> np.ndarray:
+    """Composite ink with two blurred copies of itself, blurred at reduced resolution.
+
+    ``mode="add"``: neon, the ink and its halo add light to a dark background.
+    ``mode="subtract"``: pigment, the ink (drawn inverted) and a soft shadow darken a light background.
+    """
     h, w = ink.shape[:2]
-    q = cv2.resize(ink, (w // 4, h // 4), interpolation=cv2.INTER_AREA)
-    near = cv2.GaussianBlur(q, (0, 0), 2.0)
-    far = cv2.GaussianBlur(cv2.resize(q, (w // 16, h // 16), interpolation=cv2.INTER_AREA), (0, 0), 2.5)
-    far = cv2.resize(far, (w // 4, h // 4), interpolation=cv2.INTER_LINEAR)
-    halo = cv2.addWeighted(near, glow_near, far, glow_far, 0)
-    halo = cv2.resize(halo, (w, h), interpolation=cv2.INTER_LINEAR)
-    return cv2.add(cv2.add(background, halo), ink)
+    halo = None
+    if glow_near > 0 or glow_far > 0:
+        q = cv2.resize(ink, (w // 4, h // 4), interpolation=cv2.INTER_AREA)
+        near = cv2.GaussianBlur(q, (0, 0), 2.0)
+        far = cv2.GaussianBlur(cv2.resize(q, (w // 16, h // 16), interpolation=cv2.INTER_AREA), (0, 0), 2.5)
+        far = cv2.resize(far, (w // 4, h // 4), interpolation=cv2.INTER_LINEAR)
+        halo = cv2.resize(cv2.addWeighted(near, glow_near, far, glow_far, 0), (w, h), interpolation=cv2.INTER_LINEAR)
+    if mode == "subtract":
+        out = cv2.subtract(background, ink)
+        return cv2.subtract(out, halo) if halo is not None else out
+    out = cv2.add(background, halo) if halo is not None else background
+    return cv2.add(out, ink)

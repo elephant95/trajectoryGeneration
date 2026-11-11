@@ -30,6 +30,13 @@ class Timeline:
         k = duration / 15.0
         return cls(duration, 8.0 * k, 11.0 * k, 14.0 * k)
 
+    @classmethod
+    def from_phases(cls, reveal: float = 8.0, countdown: float = 3.0, answer: float = 3.0, outro: float = 1.0) -> "Timeline":
+        """Build from the length of each phase in seconds. ``countdown=0`` skips the countdown."""
+        if min(reveal, answer, outro) <= 0 or countdown < 0:
+            raise ValueError("reveal, answer and outro must be positive, countdown non-negative")
+        return cls(reveal + countdown + answer + outro, reveal, reveal + countdown, reveal + countdown + answer)
+
 
 @dataclass(frozen=True)
 class Texts:
@@ -195,7 +202,7 @@ def render_globe(land, lon: float, lat: float, size: int, style: Style, accent=(
     c.clear(skia.ColorTRANSPARENT)
     r = n / 2 - 3 * ss
     centre = n / 2
-    c.drawCircle(centre, centre, r, skia.Paint(AntiAlias=True, Color4f=skia.Color4f(0.07, 0.11, 0.19, 1)))
+    c.drawCircle(centre, centre, r, skia.Paint(AntiAlias=True, Color4f=skia.Color4f(*style.globe_ocean, 1)))
     lam0, phi0 = np.radians(lon), np.radians(lat)
     path = skia.Path()
     geoms = shapely.segmentize(land.geometry.to_numpy(), 1.5)
@@ -219,7 +226,7 @@ def render_globe(land, lon: float, lat: float, size: int, style: Style, accent=(
     clip = skia.Path()
     clip.addCircle(centre, centre, r)
     c.clipPath(clip, True)
-    c.drawPath(path, skia.Paint(AntiAlias=True, Color4f=skia.Color4f(0.30, 0.38, 0.52, 1)))
+    c.drawPath(path, skia.Paint(AntiAlias=True, Color4f=skia.Color4f(*style.globe_land, 1)))
     c.restore()
     c.drawCircle(centre, centre, r, skia.Paint(AntiAlias=True, Style=skia.Paint.kStroke_Style, StrokeWidth=1.5 * ss,
                                                Color4f=skia.Color4f(*style.text_muted, 0.7)))

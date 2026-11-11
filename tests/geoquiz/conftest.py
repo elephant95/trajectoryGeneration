@@ -63,8 +63,15 @@ def store(tmp_path):
             line = shapely.LineString([a, b]).segmentize(0.0025)       # shared vertices at the crossings
             streets.append(line)
             cls.append("residential")
+    ranks = [0.3] * len(streets)
+    for y in (46.2, 46.8):                                # two cross-country primary roads
+        streets.append(shapely.LineString([(7.6, y), (9.4, y)]).segmentize(0.05))
+        cls.append("primary")
+        ranks.append(0.8)
     n = len(streets)
-    s.write(_norm(streets, Feature.STREET, "osm", rank=np.full(n, 0.3), source_id=[f"w{i}" for i in range(n)],
+    s.write(_norm([shapely.LineString([(7.6, 45.5), (7.6, 47.5)])], Feature.COASTLINE, "natural_earth"),
+            "natural_earth", Feature.COASTLINE)
+    s.write(_norm(streets, Feature.STREET, "osm", rank=np.array(ranks), source_id=[f"w{i}" for i in range(n)],
                   extras={"x_class": np.array(cls, dtype=object), "x_bridge": np.zeros(n, bool),
                           "x_tunnel": np.zeros(n, bool)}), "osm", Feature.STREET, "testland", lods=(LOD.FULL,))
     return s

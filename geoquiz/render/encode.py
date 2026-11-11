@@ -31,7 +31,7 @@ class VideoWriter:
     def __init__(self, path: Path, frame: Frame, crf: int = 18, preset: str = "medium", audio: Path | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        audio_in = (["-i", str(audio)] if audio else
+        audio_in = (["-stream_loop", "-1", "-i", str(audio)] if audio else       # loop short tracks
                     ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"])
         cmd = [
             ffmpeg_exe(), "-y", "-loglevel", "error",

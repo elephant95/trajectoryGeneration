@@ -141,3 +141,14 @@ def test_osm_adapter_parses_an_extract(tmp_path):
     assert len(store.read("osm", Feature.WATERWAY)) == 1
     assert store.read("osm", Feature.WATER).geom_type.isin(["Polygon", "MultiPolygon"]).all()
     assert licences.get("osm").share_alike
+
+
+def test_country_road_pull_is_not_city_street_data(store, registry, resolver):
+    from geoquiz.providers.overture import COUNTRY_PREFIX
+    main = store.read("osm", Feature.STREET)
+    main = main[main["rank"] > 0.5].assign(source="overture", licence="overture")
+    store.write(main, "overture", Feature.STREET, f"{COUNTRY_PREFIX}sql-roads", lods=(LOD.FULL,))
+    overture = registry.get("overture")
+    assert len(overture.fetch(Feature.STREET, resolver.country("SQL"))) == 2
+    city = resolver.city("Gridville").with_window(40_000.0)        # wide enough to reach the main roads
+    assert overture.fetch(Feature.STREET, city).empty and overture.coverage(Feature.STREET, city) == 0

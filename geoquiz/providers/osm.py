@@ -57,7 +57,7 @@ class OsmProvider(StoreProvider):
     name = "osm"
     licence = licences.OSM_ODBL
     features = {
-        Feature.STREET: {Scale.CITY},
+        Feature.STREET: {Scale.CITY, Scale.COUNTRY},
         Feature.RAIL: {Scale.CITY, Scale.COUNTRY},
         Feature.WATERWAY: {Scale.CITY},
         Feature.WATER: {Scale.CITY},

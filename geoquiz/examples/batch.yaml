@@ -1,0 +1,38 @@
+# geoquiz batch config: `geoquiz batch geoquiz/examples/batch.yaml`
+#
+# Every key under a puzzle (and under `defaults`) is one of the render settings;
+# `geoquiz render --help` describes them. A puzzle's own keys override `defaults`.
+
+out: geoquiz_data/out/example      # optional; --out on the command line wins
+start_index: 1                     # folders are numbered 0001_, 0002_, …
+
+defaults:
+  style: neon                      # neon | ink | blueprint | ember | mono
+  outside: keep                    # country: keep (shape hidden until the answer) | dim | cut
+  duration: 15                     # or phases: "8,3,3,1"  (reveal, countdown, answer, outro seconds)
+  ingest_missing: true             # download data the store lacks, once per target
+
+puzzles:
+  - {kind: country, target: Switzerland}                      # default features: rivers, lakes
+  - {kind: country, target: Italy, features: [rivers], style: ink, reveal: rank}
+  - {kind: country, target: AUT, features: [roads, rail], style: blueprint}
+  - {kind: country, target: Japan, features: [cities, coast], style: ember, outside: keep}
+  - kind: city
+    target: Zürich
+    answer: Zürich                 # GHSL spells it "Zurich"
+    features: [streets, rail, water, waterways]
+  - {kind: city, target: Amsterdam, features: [buildings, water], style: ink, radius_km: 1.2}
+  - kind: city
+    target: Paris
+    features: [streets, water]
+    style: mono
+    budget_km: 500
+    question: "Quelle ville|est-ce ?"
+    hint: "Devine-la grâce à ses rues"
+    colors: {street: [1.0, 0.85, 0.4]}     # override one colour of the style
+
+# Random picks, reproducible through the seed. `in` is a continent for countries
+# and a country name for cities.
+random:
+  - {kind: country, count: 2, seed: 7, in: [Africa, South America], min_population: 5000000}
+  - {kind: city, count: 1, seed: 7, in: Italy, min_population: 300000}
