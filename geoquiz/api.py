@@ -7,6 +7,8 @@
     gq.features("country", "Austria")                # what can be drawn there, and what is ready
     gq.render("country", "Brazil")                   # -> metadata dict; video in geoquiz_data/out/…
     gq.engrave("country", "CHE", features=["lakes", "roads", "rail"], width_mm=200)
+    gq.make_all("country", "South America")          # one Reel per country, same settings
+    gq.make_all("city", "Brazil", min_population=1e6, video=False, engrave=True)
 """
 from __future__ import annotations
 
@@ -81,6 +83,24 @@ class GeoQuiz:
         s = {"features": features, "ingest_missing": ingest_missing, **settings}
         return cli.engrave_one(self._ctx, kind, target, {k: v for k, v in s.items() if v is not None},
                                Path(out) if out else self.paths.out)
+
+    def targets(self, kind: str, where: str | None = None, min_population: float = 0, limit: int | None = None) -> pd.DataFrame:
+        """Every country of a continent, or every city of a country, largest first: what :meth:`make_all` would make."""
+        return pd.DataFrame(cli.select_targets(self._ctx, kind, where, min_population, limit))
+
+    def make_all(self, kind: str, where: str | None = None, min_population: float = 0, limit: int | None = None,
+                 video: bool = True, engrave: bool = False, features: list[str] | None = None,
+                 out: str | Path | None = None, ingest_missing: bool = True, **settings) -> dict:
+        """The same video and/or engraving files for every country of a continent
+        (``make_all("country", "South America")``) or every city of a country
+        (``make_all("city", "Brazil", min_population=1e6)``). Places that fail are skipped and listed
+        under ``failed`` in the returned dict."""
+        from .auto import partition_name
+        targets = cli.select_targets(self._ctx, kind, where, min_population, limit)
+        s = {"features": features, "ingest_missing": ingest_missing, **settings}
+        folder = Path(out) if out else self.paths.out / f"all_{partition_name(where or 'world')}_{kind}"
+        return cli.run_all(self._ctx, kind, targets, {k: v for k, v in s.items() if v is not None}, folder,
+                           video=video, engrave=engrave)
 
     def batch(self, config: str | Path, out: str | Path | None = None) -> int:
         """Run a YAML batch file; returns 0 when every puzzle rendered."""

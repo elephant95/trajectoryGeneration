@@ -91,6 +91,7 @@ class PuzzleOptions:
     hint: str | None = None
     answer: str | None = None      # display name override (GHSL spells Zürich "Zurich")
     fact: str | None = None
+    strict: bool = True            # False: a requested feature this place lacks is skipped instead of being an error
 
     def __post_init__(self):
         if self.outside not in OUTSIDE_MODES:
@@ -324,7 +325,7 @@ def build_puzzle(registry: ProviderRegistry, resolver: RegionResolver, kind: str
     """Build a puzzle for a country or city from any supported mix of features."""
     scale = Scale(kind)
     specs_all = LAYERS[scale]
-    explicit = features is not None
+    explicit = features is not None and options.strict
     features = tuple(features) if features else DEFAULT_FEATURES[scale]
     unknown = [f for f in features if f not in specs_all]
     if unknown:

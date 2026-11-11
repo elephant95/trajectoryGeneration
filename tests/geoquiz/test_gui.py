@@ -104,3 +104,25 @@ def test_make_video_with_engraving(server):
     status, headers, body = _get(base + r["video"])
     assert headers["Content-Type"] == "video/mp4" and body[4:8] == b"ftyp"
     assert r["engrave"]["layers"][1]["svg"].endswith("/engrave/streets.svg")
+
+
+def test_make_all_reports_each_place_and_can_stop(server):
+    base, app = server
+    targets = [{"target": "SQL", "name": "Squareland"}, {"target": "OTH", "name": "Otherland"}]
+    body = {"kind": "country", "targets": targets, "where": "Europe", "outputs": ["engrave"], "ingest_missing": False,
+            "settings": {"features": ["rivers", "lakes", "coast"], "width_mm": 60, "dpi": 127, "answer": "ignored"}}
+    job = _wait(base, _post(base + "/api/make-all", body)["id"])
+    assert job["state"] == "done" and job["progress"] == {"done": 2, "total": 2, "current": None}
+    r = job["result"]
+    assert r["batch"] and [i["name"] for i in r["items"]] == ["Squareland"] and not r["stopped"]
+    assert [f["name"] for f in r["failed"]] == ["Otherland"] and "no data" in r["failed"][0]["error"]   # reported, not fatal
+    item = r["items"][0]
+    assert item["folder"].endswith("all_europe_country/0001_SQL_rivers-lakes_engrave")
+    assert _get(base + item["engrave"]["layers"][0]["svg"])[0] == 200
+    assert "Nothing matches" in _post(base + "/api/make-all", {**body, "targets": []})["error"]
+    assert "nothing to stop" in _post(base + "/api/cancel", {"id": job["id"]})["error"]
+    # a stop request ends the run before the next place
+    res = app.make_all({**body, "targets": targets * 3})
+    app.jobs[res["id"]]["cancel"] = True
+    job = _wait(base, res["id"])
+    assert job["result"]["stopped"] and len(job["result"]["items"]) + len(job["result"]["failed"]) < 6

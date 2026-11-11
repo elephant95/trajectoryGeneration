@@ -105,3 +105,29 @@ def test_empty_store_says_what_to_do(tmp_path):
         resolver.country("CHE")
     with pytest.raises(ValueError, match="geoquiz ingest --sources ghsl"):
         resolver.city("Zürich")
+
+
+def test_all_of_a_continent_or_country(store, tmp_path, capsys):
+    from geoquiz.cli import main
+    gq = GeoQuiz(store.root.parent)
+    assert gq.targets("country", "Europe")["target"].tolist() == ["OTH", "SQL"]            # largest first
+    assert gq.targets("country", "Europe", min_population=1.5e6)["name"].tolist() == ["Otherland"]
+    assert gq.targets("country", limit=1)["target"].tolist() == ["OTH"]
+    cities = gq.targets("city", "Squareland")
+    assert cities[["target", "country"]].values.tolist() == [["Gridville", "Squareland"]]
+    with pytest.raises(ValueError, match="no continent"):
+        gq.targets("country", "Atlantis")
+    with pytest.raises(ValueError, match="no cities found"):
+        gq.targets("city", "Otherland")
+    # same settings for every place; one that lacks the data is skipped and reported
+    res = gq.make_all("country", "Europe", video=False, engrave=True, features=["rivers", "lakes", "coast"],
+                      out=tmp_path / "all", ingest_missing=False, width_mm=70, dpi=127)
+    assert [d["name"] for d in res["done"]] == ["Squareland"] and [f["name"] for f in res["failed"]] == ["Otherland"]
+    assert (tmp_path / "all" / "0002_SQL_rivers-lakes_engrave" / "all.svg").exists()
+    # in a run over many places a missing feature is skipped rather than failing the place
+    res = gq.make_all("city", "Squareland", video=False, engrave=True, features=["streets", "buildings"],
+                      out=tmp_path / "cities", ingest_missing=False, budget_km=60, width_mm=70, dpi=127)
+    assert list(res["done"][0]["result"]["layers"]) == ["streets"]
+    capsys.readouterr()
+    assert main(["--data", str(store.root.parent), "all", "country", "Europe", "--dry-run"]) == 0
+    assert capsys.readouterr().out.strip() == "2 countries: Otherland, Squareland"

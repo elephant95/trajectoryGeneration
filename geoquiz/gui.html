@@ -63,6 +63,13 @@
   .layer a { color: #1f5fbf; margin-right: 10px; font-size: 14px; }
   .path { font: 12.5px ui-monospace, Consolas, monospace; color: var(--muted); word-break: break-all; }
   .empty { color: var(--muted); padding: 30px 6px; text-align: center; }
+  .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .item { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+  .item img, .item video { width: 100%; display: block; border-radius: 5px; background: #fff; max-width: none; }
+  .item .name { font-weight: 650; margin: 6px 0 2px; }
+  .item a { margin-right: 10px; font-size: 14px; color: var(--accent); }
+  .failed-list { color: var(--bad); font-size: 14px; margin: 10px 0 0; padding-left: 18px; }
+  #stop { margin: 0 0 8px; }
 </style>
 </head>
 <body>
@@ -78,6 +85,10 @@
       <label><input type="radio" name="kind" value="country" checked><span>Country</span></label>
       <label><input type="radio" name="kind" value="city"><span>City</span></label>
     </div>
+    <div class="seg" id="scope" style="margin-top:8px">
+      <label><input type="radio" name="scope" value="one" checked><span id="scopeOne">One country</span></label>
+      <label><input type="radio" name="scope" value="all"><span id="scopeAll">All countries of a continent</span></label>
+    </div>
     <div id="cityNotice" class="notice hidden">
       Cities need a one-time download of the city list (about 310 MB).
       <div style="margin-top:8px"><button type="button" id="getCities">Download the city list</button></div>
@@ -86,6 +97,13 @@
       <div class="row">
         <label class="f"><span>Continent</span><select id="continent"></select></label>
         <label class="f"><span>Country</span><select id="country"></select></label>
+      </div>
+      <div id="allRow" class="hidden">
+        <div class="row">
+          <label class="f"><span>Only places with at least this many people</span><input type="number" id="minPop" value="0" min="0" step="100000"></label>
+          <label class="f"><span>At most this many (largest first)</span><input type="number" id="limit" value="" min="1" step="1" placeholder="no limit"></label>
+        </div>
+        <p class="notice" id="allCount"></p>
       </div>
       <div id="cityRow" class="hidden">
         <label class="f"><span>City <small id="cityCount"></small></span><select id="city"></select></label>
@@ -193,6 +211,7 @@
   <div class="card">
     <h2>Progress</h2>
     <p id="status">Nothing running.</p>
+    <button type="button" id="stop" class="hidden">Stop after the current place</button>
     <pre id="log"></pre>
   </div>
   <div class="card">
@@ -210,7 +229,41 @@ const api = async (path, body) => {
   return r.json();
 };
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + " M" : Math.round(n / 1e3) + " k";
-let META, COUNTRIES = [], CITY_COUNTRIES = [], CITIES = [], featureTimer = null, pollTimer = null;
+let META, COUNTRIES = [], CITY_COUNTRIES = [], CITIES = [], featureTimer = null, pollTimer = null, currentJob = null;
+const isAll = () => radio("scope") === "all";
+
+function allTargets() {                       // the places an "All" run would make, largest first
+  const minPop = +$("minPop").value || 0, limit = +$("limit").value || Infinity;
+  let list;
+  if (kind() === "country") {
+    const cont = $("continent").value;
+    list = COUNTRIES.filter(c => (!cont || c.continent === cont) && c.population >= Math.max(minPop, 1))
+      .sort((a, b) => b.population - a.population).map(c => ({target: c.iso3, name: c.name}));
+  } else {
+    const seen = new Set();
+    list = CITIES.filter(c => c.population >= minPop && !seen.has(c.name) && seen.add(c.name))
+      .map(c => ({target: c.name, name: c.name, country: $("country").value}));
+  }
+  return list.slice(0, limit);
+}
+
+function refreshScope() {
+  const all = isAll(), isCity = kind() === "city";
+  $("scopeOne").textContent = isCity ? "One city" : "One country";
+  $("scopeAll").textContent = isCity ? "All cities of a country" : "All countries of a continent";
+  $("allRow").classList.toggle("hidden", !all);
+  $("cityRow").classList.toggle("hidden", !isCity || all);
+  $("country").parentElement.classList.toggle("hidden", all && !isCity);
+  const t = all ? allTargets() : [];
+  if (all) {
+    const where = isCity ? $("country").value : ($("continent").value || "the whole world");
+    $("allCount").textContent = t.length
+      ? `${t.length} ${isCity ? "cities" : "countries"} in ${where}: ${t.slice(0, 8).map(x => x.name).join(", ")}${t.length > 8 ? ", …" : ""}`
+      : "Nothing matches these limits.";
+  }
+  $("make").textContent = all ? `Make all ${t.length}` : "Make it";
+  for (const id of ["answer", "fact"]) { $(id).disabled = all; if (all) $(id).value = ""; }
+}
 
 function option(value, text) { const o = document.createElement("option"); o.value = value; o.textContent = text; return o; }
 function fill(select, items, keep) {
@@ -247,6 +300,7 @@ function refreshCountries() {
     const ch = source.find(c => c.iso3 === "CHE"); if (ch) $("country").value = "CHE";
   }
   isCity ? loadCities() : refreshFeatures();
+  refreshScope();
 }
 
 async function loadCities() {
@@ -264,10 +318,11 @@ function showCities() {
   const list = CITIES.filter(c => !f || c.name.toLowerCase().includes(f));
   fill($("city"), list.map(c => [c.name, `${c.name} — ${fmt(c.population)} people`]));
   $("cityCount").textContent = `(${list.length} of ${CITIES.length})`;
-  refreshFeatures();
+  refreshFeatures(); refreshScope();
 }
 
 function target() { return kind() === "city" ? $("city").value : $("country").value; }
+function sample() { const t = isAll() ? allTargets()[0] : null; return t ? t.target : target(); }   // whose data status to show
 
 function drawFeatures(status) {
   const k = kind(), defaults = META.default_features[k];
@@ -299,12 +354,12 @@ function refreshPrimary() {
 function refreshFeatures() {
   drawFeatures(null);
   clearTimeout(featureTimer);
-  const k = kind(), t = target();
-  if (!t) return;
+  const k = kind(), t = sample();
+  if (!t || isAll()) return;                 // in an "All" run each place is checked when its turn comes
   featureTimer = setTimeout(async () => {
     const q = `/api/features?kind=${k}&target=${encodeURIComponent(t)}` + (k === "city" ? `&country=${encodeURIComponent($("country").value)}` : "");
     const st = await api(q);
-    if (Array.isArray(st) && k === kind() && t === target()) drawFeatures(st);
+    if (Array.isArray(st) && k === kind() && t === sample() && !isAll()) drawFeatures(st);
   }, 250);
 }
 
@@ -344,11 +399,21 @@ function watch(id, onDone) {
     const job = await api("/api/job/" + id);
     $("log").textContent = (job.log || []).join("\n");
     $("log").scrollTop = $("log").scrollHeight;
-    if (job.state === "running") return setStatus("Working on " + job.title + " …");
-    clearInterval(pollTimer);
-    $("make").disabled = false; $("getCities").disabled = false;
+    const pr = job.progress;
+    if (job.state === "running") {
+      if (pr) { showBatch({items: job.items, failed: job.failed, total: pr.total}, true);
+                $("stop").classList.remove("hidden"); $("stop").disabled = job.cancel;
+                return setStatus(job.cancel ? "Stopping after " + (pr.current || "this place") + " …"
+                                            : `Working on ${pr.done + 1} of ${pr.total}: ${pr.current || ""} …`); }
+      return setStatus("Working on " + job.title + " …");
+    }
+    clearInterval(pollTimer); currentJob = null;
+    $("make").disabled = false; $("getCities").disabled = false; $("stop").classList.add("hidden");
     if (job.state === "failed") return setStatus("That did not work: " + job.error, "failed");
-    setStatus("Done.", "done"); onDone(job.result);
+    const r = job.result || {};
+    setStatus(r.batch ? `Done: ${r.items.length} of ${r.total} made` + (r.failed.length ? `, ${r.failed.length} skipped` : "") + (r.stopped ? " (stopped early)." : ".")
+                      : "Done.", "done");
+    onDone(r);
   };
   pollTimer = setInterval(tick, 700); tick();
 }
@@ -377,7 +442,45 @@ function showResult(r) {
   box.append(wrap, el("p", {style: "margin:14px 0 4px"}, open), el("p", {className: "path", textContent: r.folder}));
 }
 
+function showBatch(r, running) {
+  const box = $("result"), bust = running ? "" : "?t=" + Date.now();
+  const cards = r.items.map(it => {
+    const thumb = it.cover ? el("img", {src: it.cover + bust, alt: it.name, loading: "lazy"})
+                           : el("img", {src: it.engrave.layers[0].png + bust, alt: it.name, loading: "lazy"});
+    const links = [];
+    if (it.video) links.push(el("a", {href: it.video, target: "_blank", textContent: "Video"}));
+    if (it.engrave) links.push(el("a", {href: it.engrave.layers[0].svg, download: it.name + "_all.svg", textContent: "SVG"}),
+                               el("a", {href: it.engrave.layers[0].png, download: it.name + "_all.png", textContent: "PNG"}));
+    const size = it.engrave ? el("div", {className: "hint", style: "margin:0", textContent: `${it.engrave.canvas_mm[0].toFixed(0)} × ${it.engrave.canvas_mm[1].toFixed(0)} mm`}) : "";
+    return el("div", {className: "item"}, thumb, el("div", {className: "name", textContent: it.name}), size, ...links);
+  });
+  const parts = [el("div", {className: "items"}, ...cards)];
+  if (!r.items.length && running) parts.unshift(el("p", {className: "empty", textContent: "Finished places appear here one by one."}));
+  if (r.failed.length) parts.push(el("ul", {className: "failed-list"}, ...r.failed.map(f => el("li", {textContent: `${f.name}: ${f.error}`}))));
+  if (r.folder) {
+    const open = el("button", {type: "button", textContent: "Open the folder"});
+    open.onclick = () => api("/api/open-folder", {folder: r.folder});
+    parts.push(el("p", {className: "hint", textContent: "Each place has its own numbered folder with every file (all engraving layers included)."}),
+               el("p", {style: "margin:10px 0 4px"}, open), el("p", {className: "path", textContent: r.folder}));
+  }
+  box.replaceChildren(...parts);
+}
+
+async function makeAll() {
+  const targets = allTargets();
+  if (!targets.length) return setStatus("Nothing matches these limits.", "failed");
+  if (!document.querySelector("#features input:checked")) return setStatus("Tick at least one thing to draw.", "failed");
+  const o = radio("outputs"), isCity = kind() === "city";
+  setStatus("Starting …");
+  const res = await api("/api/make-all", {kind: kind(), targets, where: isCity ? $("country").value : $("continent").value,
+                                          outputs: o === "both" ? ["video", "engrave"] : [o], settings: settings(), ingest_missing: $("ingest").checked});
+  if (res.error) return setStatus(res.error, "failed");
+  $("make").disabled = true; $("log").textContent = ""; currentJob = res.id;
+  watch(res.id, r => showBatch(r, false));
+}
+
 async function make() {
+  if (isAll()) return makeAll();
   const t = target();
   if (!t) return setStatus("Choose a place first.", "failed");
   if (!document.querySelector("#features input:checked")) return setStatus("Tick at least one thing to draw.", "failed");
@@ -404,11 +507,14 @@ async function init() {
   fill($("reveal"), META.reveals.map(r => [r, revealNames[r] || r]));
   document.querySelectorAll("input[name=kind]").forEach(i => i.onchange = refreshPlace);
   document.querySelectorAll("input[name=outputs]").forEach(i => i.onchange = refreshOutputs);
+  document.querySelectorAll("input[name=scope]").forEach(i => i.onchange = () => { refreshScope(); refreshFeatures(); });
+  $("minPop").oninput = refreshScope; $("limit").oninput = refreshScope;
+  $("stop").onclick = () => currentJob && api("/api/cancel", {id: currentJob});
   document.querySelectorAll("input[name=windowMode]").forEach(i => i.onchange = () => {
     $("budgetField").classList.toggle("hidden", radio("windowMode") !== "budget");
     $("radiusField").classList.toggle("hidden", radio("windowMode") !== "radius");
   });
-  $("continent").onchange = refreshCountries;
+  $("continent").onchange = () => { refreshCountries(); refreshScope(); };
   $("country").onchange = () => { $("country").dataset.touched = "1"; kind() === "city" ? loadCities() : refreshFeatures(); };
   $("city").onchange = refreshFeatures;
   $("cityFilter").oninput = showCities;

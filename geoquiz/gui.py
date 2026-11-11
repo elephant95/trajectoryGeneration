@@ -100,13 +100,14 @@ class App:
             if self.busy.locked():
                 return {"error": "Something is still running. Wait for it to finish."}
             jid = len(self.jobs) + 1
-            job = self.jobs[jid] = {"id": jid, "title": title, "state": "running", "log": [], "result": None, "error": None}
+            job = self.jobs[jid] = {"id": jid, "title": title, "state": "running", "log": [], "result": None, "error": None,
+                                    "progress": None, "items": [], "failed": [], "cancel": False}
             self.busy.acquire()
 
         def work():
             try:
                 with contextlib.redirect_stdout(_Log(job)):
-                    job["result"] = fn()
+                    job["result"] = fn(job)
                 job["state"] = "done"
             except Exception as e:                       # shown to the user in the page
                 job["error"] = str(e.args[0]) if e.args else repr(e)
@@ -120,39 +121,90 @@ class App:
 
     def download_cities(self) -> dict:
         from .auto import ensure_basics
-        return self.start(lambda: {"downloaded": ensure_basics(self.registry, self.raw, cities=True)}, "Downloading the city list")
+        return self.start(lambda job: {"downloaded": ensure_basics(self.registry, self.raw, cities=True)}, "the city list")
 
-    def make(self, req: dict) -> dict:
-        kind, target, outputs = req["kind"], req["target"], set(req.get("outputs", ["video"]))
-        if not outputs & {"video", "engrave"}:
-            return {"error": "Choose at least one thing to make: a video or engraving files."}
+    def _settings(self, req: dict) -> dict | str:
+        """Validated settings from a request, or an error message."""
+        if not set(req.get("outputs", ["video"])) & {"video", "engrave"}:
+            return "Choose at least one thing to make: a video or engraving files."
         settings = {k: v for k, v in req.get("settings", {}).items() if v not in ("", None)}
         unknown = set(settings) - set(cli.RENDER_DEFAULTS)
         if unknown:
-            return {"error": f"unknown settings {sorted(unknown)}"}
+            return f"unknown settings {sorted(unknown)}"
         settings["ingest_missing"] = bool(req.get("ingest_missing", True))
+        return settings
 
-        def run():
+    def _result(self, name: str, meta: dict | None, engrave: dict | None) -> dict:
+        """What the page needs to show one finished place."""
+        result = {"name": name}
+        if meta:
+            folder = Path(meta["folder"])
+            result.update(folder=str(folder), video=self._url(folder / "video.mp4"), cover=self._url(folder / "cover.jpg"),
+                          credit=meta["attribution"]["on_screen"])
+            engrave = meta.get("engrave")
+        if engrave:
+            ef = Path(engrave["folder"])
+            result.setdefault("folder", str(ef))
+            result["engrave"] = {
+                "folder": str(ef), "canvas_mm": engrave["canvas_mm"], "scale": engrave["scale"],
+                "layers": [{"name": n, "svg": self._url(ef / f"{n}.svg"), "png": self._url(ef / f"{n}.png")}
+                           for n in ["all", *engrave["layers"], "contour"]]}
+        return result
+
+    def make(self, req: dict) -> dict:
+        kind, target, outputs = req["kind"], req["target"], set(req.get("outputs", ["video"]))
+        settings = self._settings(req)
+        if isinstance(settings, str):
+            return {"error": settings}
+
+        def run(job):
             out = self.paths.out
-            result = {"target": target, "files": {}}
             if "video" in outputs:
-                meta = cli.render_one(self.ctx, kind, target, {**settings, "engrave": "engrave" in outputs}, out)
-                folder = Path(meta["folder"])
-                result.update(folder=str(folder), video=self._url(folder / "video.mp4"), cover=self._url(folder / "cover.jpg"),
-                              caption=(folder / "caption.txt").read_text(encoding="utf-8"), credit=meta["attribution"]["on_screen"])
-                engrave = meta.get("engrave")
-            else:
-                engrave = cli.engrave_one(self.ctx, kind, target, settings, out)
-                result["folder"] = engrave["folder"]
-            if engrave:
-                ef = Path(engrave["folder"])
-                result["engrave"] = {
-                    "folder": str(ef), "canvas_mm": engrave["canvas_mm"], "scale": engrave["scale"],
-                    "layers": [{"name": n, "svg": self._url(ef / f"{n}.svg"), "png": self._url(ef / f"{n}.png")}
-                               for n in ["all", *engrave["layers"], "contour"]]}
-            return result
+                return self._result(target, cli.render_one(self.ctx, kind, target, {**settings, "engrave": "engrave" in outputs}, out), None)
+            return self._result(target, None, cli.engrave_one(self.ctx, kind, target, settings, out))
 
         return self.start(run, f"{kind} {target}")
+
+    def make_all(self, req: dict) -> dict:
+        """The same thing for every place in ``targets`` (dicts from the page's own lists)."""
+        from .auto import partition_name
+        kind, outputs = req["kind"], set(req.get("outputs", ["video"]))
+        targets = [{"target": str(t["target"]), "name": str(t.get("name") or t["target"]), "country": t.get("country")}
+                   for t in req.get("targets", [])]
+        if not targets:
+            return {"error": "Nothing matches: no places to make."}
+        settings = self._settings(req)
+        if isinstance(settings, str):
+            return {"error": settings}
+        settings.pop("answer", None)                     # one name or fact cannot fit every place
+        settings.pop("fact", None)
+        folder = self.paths.out / f"all_{partition_name(req.get('where') or 'world')}_{kind}"
+
+        def run(job):
+            job["progress"] = {"done": 0, "total": len(targets), "current": targets[0]["name"]}
+
+            def on_item(i, total, t, r, error):
+                if r is not None:
+                    job["items"].append(self._result(t["name"], r if "video" in outputs else None,
+                                                     None if "video" in outputs else r))
+                else:
+                    job["failed"].append({"name": t["name"], "error": error})
+                nxt = targets[i]["name"] if i < total else None
+                job["progress"] = {"done": i, "total": total, "current": nxt}
+
+            cli.run_all(self.ctx, kind, targets, settings, folder, video="video" in outputs, engrave="engrave" in outputs,
+                        on_item=on_item, should_stop=lambda: job["cancel"])
+            return {"batch": True, "folder": str(folder), "items": job["items"], "failed": job["failed"],
+                    "total": len(targets), "stopped": job["cancel"]}
+
+        return self.start(run, f"{len(targets)} {'countries' if kind == 'country' else 'cities'}")
+
+    def cancel(self, jid: int) -> dict:
+        job = self.jobs.get(jid)
+        if not job or job["state"] != "running":
+            return {"error": "nothing to stop"}
+        job["cancel"] = True
+        return {"ok": True}
 
     def _url(self, path: Path) -> str:
         return "/files/" + path.resolve().relative_to(self.paths.out.resolve()).as_posix()
@@ -263,6 +315,10 @@ def _handler(app: App):
                 req = json.loads(self.rfile.read(n) or b"{}")
                 if self.path == "/api/make":
                     self._json(app.make(req))
+                elif self.path == "/api/make-all":
+                    self._json(app.make_all(req))
+                elif self.path == "/api/cancel":
+                    self._json(app.cancel(int(req.get("id", 0))))
                 elif self.path == "/api/download-cities":
                     self._json(app.download_cities())
                 elif self.path == "/api/open-folder":

@@ -32,6 +32,13 @@ are form fields; progress and the results (a video player, a preview and
 download link for every engraving layer, a button that opens the output
 folder) appear on the same page. Nothing else needs a command.
 
+Choosing **All countries of a continent** or **All cities of a country**
+makes the same thing for every place with one click. A minimum population
+and a maximum count (largest first) keep the run to a sensible size; the
+page shows how many places match before you start, each finished place
+appears as it completes, a place that fails is listed and skipped, and a
+button stops the run after the current place.
+
 ## Run
 
 ```bash
@@ -44,6 +51,9 @@ geoquiz render country Japan --features cities,coast --style ember
 geoquiz render city Paris --features streets,water --style ink --ingest-missing
 geoquiz render city Amsterdam --features buildings,water --radius-km 1.2 --ingest-missing
 
+geoquiz all country "South America"                         # one Reel per country, same settings
+geoquiz all city Brazil --min-pop 1000000 --limit 10 --engrave-only --width-mm 150
+geoquiz all country Europe --dry-run                        # only list what would be made
 geoquiz batch geoquiz/examples/batch.yaml      # many Reels from one config, including random picks
 geoquiz list features | styles | countries | cities --in France
 geoquiz resolve country Austria                # which features are ready there, and how to get the rest
@@ -148,6 +158,9 @@ gq.render("city", "Paris", features=["streets", "water"], style="ink", budget_km
           question="Quelle ville|est-ce ?", duration=12)
 gq.render("country", "CHE", features=["lakes", "roads", "rail"], engrave=True, width_mm=200)
 gq.engrave("city", "Zürich", features=["streets", "rail", "water"], width_mm=150)
+gq.targets("city", "Brazil", min_population=1e6)                          # what make_all would make
+gq.make_all("country", "South America", style="ember")                    # one Reel per country
+gq.make_all("city", "Brazil", min_population=1e6, limit=10, video=False, engrave=True, width_mm=150)
 gq.batch("geoquiz/examples/batch.yaml")
 gq.ingest("hydrosheds", hydro_regions="all")
 ```

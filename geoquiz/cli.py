@@ -11,6 +11,8 @@
     geoquiz engrave country CHE --features lakes,roads,rail --width-mm 200   # laser files, one per feature
     geoquiz resolve country Austria                  # which features are ready for this place
     geoquiz batch batch.yaml                         # many Reels from one config file
+    geoquiz all country "South America"              # one Reel per country, same settings
+    geoquiz all city Brazil --min-pop 1000000 --limit 10 --engrave-only
     geoquiz gui                                      # the same, by clicking, in your browser
 """
 from __future__ import annotations
@@ -167,6 +169,7 @@ RENDER_DEFAULTS = {
     "radius_km": None, "density": 1.0, "reveal": "auto", "country": None, "question": None, "hint": None,
     "answer": None, "fact": None, "duration": 15.0, "phases": None, "size": "1080x1920", "fps": 30, "zoom": 0.05,
     "crf": 18, "audio": None, "colors": None, "ingest_missing": False,
+    "skip_missing": False,     # draw what a place has instead of failing when it lacks a requested feature
     # laser-engraving export (see engrave.py); "engrave" adds it to a rendered Reel's folder
     "engrave": False, "width_mm": 200.0, "margin_mm": 5.0, "min_line_mm": 0.3, "line_scale": 1.0,
     "lines": "outline", "contour_mm": 0.4, "contour_in_layers": False, "dpi": 508, "mirror": False,
@@ -198,7 +201,8 @@ def _prepare(ctx, kind: str, key: str, settings: dict):
         outside=s["outside"], padding=float(s["padding"]), buffer_km=float(s["buffer_km"]),
         budget_km=float(s["budget_km"]), radius_km=float(s["radius_km"]) if s["radius_km"] else None,
         density=float(s["density"]), reveal=s["reveal"], country=s["country"],
-        question=tuple(question) if question else None, hint=s["hint"], answer=s["answer"], fact=s["fact"])
+        question=tuple(question) if question else None, hint=s["hint"], answer=s["answer"], fact=s["fact"],
+        strict=not s["skip_missing"])
     if s["ingest_missing"]:
         from .auto import ensure_data
         ensure_data(registry, resolver, raw, kind, key, features, s["country"])
@@ -232,10 +236,79 @@ def render_one(ctx, kind: str, key: str, settings: dict, out: Path, index: int |
     return meta
 
 
-def engrave_one(ctx, kind: str, key: str, settings: dict, out: Path) -> dict:
+def engrave_one(ctx, kind: str, key: str, settings: dict, out: Path, index: int | None = None) -> dict:
     """Engraving files only, no video. Features are thinned for the target itself (as with outside="cut")."""
     s, puzzle, _ = _prepare(ctx, kind, key, {"outside": "cut", "buffer_km": 2.0, **settings})
-    return _engrave(puzzle, Path(out) / f"{puzzle.slug.rsplit('_', 1)[0]}_engrave", s)
+    name = f"{puzzle.slug.rsplit('_', 1)[0]}_engrave"
+    return _engrave(puzzle, Path(out) / (f"{index:04d}_{name}" if index is not None else name), s)
+
+
+def select_targets(ctx, kind: str, where: str | None = None, min_population: float = 0, limit: int | None = None) -> list[dict]:
+    """Every country of a continent, or every city of a country, largest first.
+
+    ``where`` is a continent for countries (None: the whole world) and a
+    country name for cities. Returns dicts with ``target`` (what to pass to
+    render), ``name``, ``population`` and, for cities, ``country``.
+    """
+    from .auto import ensure_basics
+    from .regions import fold
+    _, _, raw, registry, _ = ctx
+    ensure_basics(registry, raw, cities=kind == "city")
+    if kind == "country":
+        t = registry.get("natural_earth").countries()
+        if where:
+            t = t[t["x_continent"].map(fold) == fold(where)]
+            if t.empty:
+                raise ValueError(f"no continent matches {where!r}")
+        t = t[t["x_pop"] >= max(min_population, 1)].sort_values("x_pop", ascending=False)
+        out = [{"target": r["source_id"], "name": r["name"], "population": float(r["x_pop"])} for _, r in t.iterrows()]
+    else:
+        if not where:
+            raise ValueError("all cities needs a country")
+        t = registry.get("ghsl").urban_centres()
+        t = t[(t["x_country"].map(fold) == fold(where)) & t["name"].notna()]
+        if t.empty:
+            raise ValueError(f"no cities found in {where!r} (check the spelling with `geoquiz list cities`)")
+        t = t[t["x_pop"] >= min_population].sort_values("x_pop", ascending=False).drop_duplicates("name")
+        out = [{"target": r["name"], "name": r["name"], "population": float(r["x_pop"]), "country": r["x_country"]}
+               for _, r in t.iterrows()]
+    return out[: int(limit)] if limit else out
+
+
+def run_all(ctx, kind: str, targets: list[dict], settings: dict, out: Path, video: bool = True, engrave: bool = False,
+            on_item=None, should_stop=None) -> dict:
+    """Make the same thing for every target. A place that fails is reported and skipped.
+
+    Folders are numbered in the order given. ``on_item(i, total, target, result_or_None, error_or_None)``
+    is called after each place; ``should_stop()`` is checked before each.
+    """
+    from .puzzles import MissingData
+    if not (video or engrave):
+        raise ValueError("choose a video, engraving files, or both")
+    settings = {"skip_missing": True, **settings}            # a landlocked country simply has no coast
+    done, failed = [], []
+    for i, t in enumerate(targets, start=1):
+        if should_stop and should_stop():
+            break
+        s = dict(settings)
+        if kind == "city" and t.get("country"):
+            s["country"] = t["country"]
+        try:
+            if video:
+                r = render_one(ctx, kind, t["target"], {**s, "engrave": engrave}, out, index=i)
+            else:
+                r = engrave_one(ctx, kind, t["target"], s, out, index=i)
+            done.append({**t, "folder": r["folder"], "result": r})
+            if on_item:
+                on_item(i, len(targets), t, r, None)
+        except (MissingData, KeyError, ValueError, ConnectionError, OSError) as e:
+            msg = str(e.args[0]) if e.args else repr(e)
+            failed.append({**t, "error": msg})
+            print(f"SKIPPED {t['name']}: {msg}")
+            if on_item:
+                on_item(i, len(targets), t, None, msg)
+    print(f"{len(done)} of {len(targets)} made into {out}" + (f"; {len(failed)} skipped" if failed else ""))
+    return {"folder": str(out), "done": done, "failed": failed, "total": len(targets)}
 
 
 def feature_status(ctx, kind: str, key: str, country: str | None = None) -> dict:
@@ -280,6 +353,27 @@ def cmd_engrave(args) -> int:
     except (MissingData, KeyError, ValueError, ConnectionError) as e:
         sys.exit(f"error: {e.args[0] if e.args else e}")
     return 0
+
+
+def cmd_all(args) -> int:
+    ctx = _context(args)
+    try:
+        targets = select_targets(ctx, args.kind, args.where, args.min_pop, args.limit)
+    except (KeyError, ValueError, ConnectionError) as e:
+        sys.exit(f"error: {e.args[0] if e.args else e}")
+    if not targets:
+        sys.exit("nothing matches")
+    print(f"{len(targets)} {'countries' if args.kind == 'country' else 'cities'}: " + ", ".join(t["name"] for t in targets[:12])
+          + (" …" if len(targets) > 12 else ""))
+    if args.dry_run:
+        return 0
+    from .auto import partition_name
+    s = _settings_from_args(args)
+    s.setdefault("ingest_missing", True)
+    s.pop("engrave", None)
+    out = Path(args.out) if args.out else ctx[0].out / f"all_{partition_name(args.where or 'world')}_{args.kind}"
+    res = run_all(ctx, args.kind, targets, s, out, video=not args.engrave_only, engrave=bool(args.engrave or args.engrave_only))
+    return 1 if res["failed"] else 0
 
 
 def cmd_spike(args) -> int:
@@ -427,6 +521,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("key", help="country name or ISO3 code, or city name")
     render_opts(p)
     p.set_defaults(fn=cmd_render)
+
+    p = sub.add_parser("all", help="the same Reel or engraving for every country of a continent, or every city of a country")
+    p.add_argument("kind", choices=["country", "city"])
+    p.add_argument("where", nargs="?", help="country: a continent (omit for the whole world); city: a country name")
+    p.add_argument("--min-pop", type=float, default=0, help="only places with at least this many people")
+    p.add_argument("--limit", type=int, help="at most this many, largest first")
+    p.add_argument("--engrave-only", action="store_true", help="engraving files only, no videos")
+    p.add_argument("--dry-run", action="store_true", help="only list what would be made")
+    render_opts(p)
+    p.set_defaults(fn=cmd_all)
 
     p = sub.add_parser("engrave", help="laser-engraving files only: one picture per feature, cut to the contour")
     p.add_argument("kind", choices=["country", "city"])
