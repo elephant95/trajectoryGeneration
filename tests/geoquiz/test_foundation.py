@@ -152,3 +152,33 @@ def test_country_road_pull_is_not_city_street_data(store, registry, resolver):
     assert len(overture.fetch(Feature.STREET, resolver.country("SQL"))) == 2
     city = resolver.city("Gridville").with_window(40_000.0)        # wide enough to reach the main roads
     assert overture.fetch(Feature.STREET, city).empty and overture.coverage(Feature.STREET, city) == 0
+
+
+def test_download_retries_then_uses_a_mirror(tmp_path, monkeypatch):
+    import requests
+    from geoquiz import ingest
+
+    calls = []
+
+    class Reply:
+        headers = {"Last-Modified": "today"}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def raise_for_status(self): pass
+        def iter_content(self, n): yield b"payload"
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        if "primary" in url:
+            raise requests.ConnectionError("unreachable")
+        return Reply()
+
+    monkeypatch.setattr(ingest.requests, "get", fake_get)
+    monkeypatch.setattr(ingest.time, "sleep", lambda s: None)
+    raw = RawCache(tmp_path)
+    path = raw.fetch("src", "https://primary.example/a.zip", mirrors=("https://mirror.example/a.zip",))
+    assert path.read_bytes() == b"payload" and calls == ["https://primary.example/a.zip"] * 4 + ["https://mirror.example/a.zip"]
+    assert raw.record("src/a.zip")["url"] == "https://mirror.example/a.zip"          # the manifest names what was used
+    with pytest.raises(ingest.DownloadError, match="run the same command"):
+        raw.fetch("src", "https://primary.example/b.zip")
+    assert not list((tmp_path / "src").glob("*.part"))

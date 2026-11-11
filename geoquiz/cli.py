@@ -266,7 +266,7 @@ def cmd_render(args) -> int:
     ctx = _context(args)
     try:
         render_one(ctx, args.kind, args.key, _settings_from_args(args), Path(args.out) if args.out else ctx[0].out)
-    except (MissingData, KeyError, ValueError) as e:
+    except (MissingData, KeyError, ValueError, ConnectionError) as e:
         sys.exit(f"error: {e.args[0] if e.args else e}")
     return 0
 
@@ -276,7 +276,7 @@ def cmd_engrave(args) -> int:
     ctx = _context(args)
     try:
         engrave_one(ctx, args.kind, args.key, _settings_from_args(args), Path(args.out) if args.out else ctx[0].out)
-    except (MissingData, KeyError, ValueError) as e:
+    except (MissingData, KeyError, ValueError, ConnectionError) as e:
         sys.exit(f"error: {e.args[0] if e.args else e}")
     return 0
 

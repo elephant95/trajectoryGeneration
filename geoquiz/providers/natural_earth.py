@@ -10,6 +10,7 @@ from ..schema import LOD, Feature, Scale
 from .base import StoreProvider
 
 CDN = "https://naciscdn.org/naturalearth"
+MIRROR = "https://naturalearth.s3.amazonaws.com"      # Natural Earth's own copy on AWS
 
 #: (feature, partition) -> path under the CDN
 LAYERS = {
@@ -40,7 +41,9 @@ class NaturalEarthProvider(StoreProvider):
 
     def ingest(self, raw: RawCache, refresh: bool = False) -> None:
         for (feature, partition), rel in LAYERS.items():
-            archive = raw.fetch(self.name, f"{CDN}/{rel}.zip", refresh=refresh)
+            scale, theme, stem = rel.split("/")
+            archive = raw.fetch(self.name, f"{CDN}/{rel}.zip", refresh=refresh,
+                                mirrors=(f"{MIRROR}/{scale}_{theme}/{stem}.zip",))
             d = raw.extract(archive)
             stem = rel.rsplit("/", 1)[-1]
             version_file = d / f"{stem}.VERSION.txt"
