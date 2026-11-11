@@ -18,6 +18,20 @@ Needs `ffmpeg` on the PATH (or `pip install imageio-ffmpeg`), and on a
 headless Linux box `libegl1` for skia-python. Text uses the Inter and Inter
 Display fonts when installed and falls back to the system default otherwise.
 
+## Point and click
+
+```bash
+geoquiz gui          # or double-click geoquiz_gui.bat on Windows
+```
+
+This opens a page in your browser (served from your own computer, at
+`http://127.0.0.1:8765`) where you pick the continent, the country or city,
+what to draw, and whether to make a video, laser-engraving files or both.
+Video and engraving settings (style, length, size in mm, thinnest line, …)
+are form fields; progress and the results (a video player, a preview and
+download link for every engraving layer, a button that opens the output
+folder) appear on the same page. Nothing else needs a command.
+
 ## Run
 
 ```bash
@@ -172,6 +186,7 @@ behind the video, kept so they can be shared on request as ODbL asks.
 | `auto.py` | `--ingest-missing`: works out and downloads what a puzzle lacks. |
 | `cli.py` | Commands, and the batch runner. |
 | `api.py` | `GeoQuiz`: the same operations as Python calls. |
+| `gui.py`, `gui.html` | The browser interface and its local server (standard library only). |
 | `engrave.py` | Laser-engraving export: per-feature SVG and PNG cut to the contour. |
 | `reel.py` | Timeline and assembly of one puzzle folder. |
 

@@ -11,6 +11,7 @@
     geoquiz engrave country CHE --features lakes,roads,rail --width-mm 200   # laser files, one per feature
     geoquiz resolve country Austria                  # which features are ready for this place
     geoquiz batch batch.yaml                         # many Reels from one config file
+    geoquiz gui                                      # the same, by clicking, in your browser
 """
 from __future__ import annotations
 
@@ -444,6 +445,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("spike", help="phase 0: Switzerland's rivers and Zürich's streets")
     render_opts(p)
     p.set_defaults(fn=cmd_spike)
+
+    p = sub.add_parser("gui", help="point-and-click interface in your browser")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--no-browser", action="store_true", help="do not open the browser automatically")
+    p.set_defaults(fn=lambda a: __import__("geoquiz.gui", fromlist=["serve"]).serve(a.data, a.port, not a.no_browser) or 0)
 
     p = sub.add_parser("batch", help="render many Reels from a YAML config")
     p.add_argument("config")

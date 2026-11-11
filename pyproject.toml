@@ -53,3 +53,6 @@ geoquiz = "geoquiz.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["swiss_rail_rl*", "geoquiz*"]
+
+[tool.setuptools.package-data]
+geoquiz = ["*.html", "examples/*.yaml"]

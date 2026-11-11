@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>geoquiz</title>
+<style>
+  :root {
+    --bg: #f4f2ee; --card: #ffffff; --ink: #1c1e22; --muted: #666b75; --line: #dcd8d0;
+    --accent: #1f5fbf; --accent-ink: #ffffff; --ok: #1d7a46; --warn: #a55a00; --bad: #b3261e; --soft: #eef2f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111418; --card: #1a1e24; --ink: #e9ebef; --muted: #9aa1ad; --line: #2e343d;
+            --accent: #6aa5ff; --accent-ink: #0c1320; --ok: #5fcf8f; --warn: #f0a84a; --bad: #ff8a80; --soft: #222a36; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 18px 24px 6px; }
+  header h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+  header p { margin: 2px 0 0; color: var(--muted); }
+  main { display: grid; grid-template-columns: minmax(340px, 520px) minmax(0, 1fr); gap: 20px; padding: 14px 24px 40px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px 32px; } header { padding: 14px 16px 4px; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 650; }
+  label.f { display: block; margin: 10px 0 0; }
+  label.f > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+  select, input[type=text], input[type=number] { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--card); color: var(--ink); font: inherit; }
+  select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  form, section { min-width: 0; }
+  .row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 480px) { .row, .row3, .feat { grid-template-columns: minmax(0, 1fr) !important; } }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg label { position: relative; cursor: pointer; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg span { display: inline-block; padding: 7px 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); user-select: none; }
+  .seg input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .seg input:disabled + span { opacity: 0.45; cursor: not-allowed; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(128,128,128,.5); }
+  .feat { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+  .feat label { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex: none; }
+  .dot.ready { background: var(--ok); } .dot.fetch { background: var(--warn); }
+  .hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+  .notice { background: var(--soft); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 14px; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 8px 14px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; padding: 11px 20px; font-size: 16px; width: 100%; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .hidden { display: none !important; }
+  details summary { cursor: pointer; color: var(--accent); margin-top: 12px; font-size: 14px; }
+  #status { font-weight: 600; margin: 0 0 8px; }
+  #status.failed { color: var(--bad); } #status.done { color: var(--ok); }
+  pre#log { margin: 0; max-height: 190px; overflow: auto; font: 12.5px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; }
+  .results { display: grid; grid-template-columns: minmax(200px, 300px) minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 1150px) { .results { grid-template-columns: 1fr; } }
+  video { width: 100%; max-width: 300px; border-radius: 8px; background: #000; display: block; }
+  .layers { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+  .layer { border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #fff; color: #1c1e22; }
+  .layer img { width: 100%; display: block; }
+  .layer .name { font-weight: 650; margin: 6px 0 2px; }
+  .layer a { color: #1f5fbf; margin-right: 10px; font-size: 14px; }
+  .path { font: 12.5px ui-monospace, Consolas, monospace; color: var(--muted); word-break: break-all; }
+  .empty { color: var(--muted); padding: 30px 6px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>geoquiz</h1>
+  <p>Pick a place and what to draw, then make a quiz video, laser-engraving files, or both.</p>
+</header>
+<main>
+<form id="form" onsubmit="return false">
+  <div class="card">
+    <h2>1 · Place</h2>
+    <div class="seg" id="kind">
+      <label><input type="radio" name="kind" value="country" checked><span>Country</span></label>
+      <label><input type="radio" name="kind" value="city"><span>City</span></label>
+    </div>
+    <div id="cityNotice" class="notice hidden">
+      Cities need a one-time download of the city list (about 310 MB).
+      <div style="margin-top:8px"><button type="button" id="getCities">Download the city list</button></div>
+    </div>
+    <div id="placePickers">
+      <div class="row">
+        <label class="f"><span>Continent</span><select id="continent"></select></label>
+        <label class="f"><span>Country</span><select id="country"></select></label>
+      </div>
+      <div id="cityRow" class="hidden">
+        <label class="f"><span>City <small id="cityCount"></small></span><select id="city"></select></label>
+        <label class="f"><span>Find a city in this country</span><input type="text" id="cityFilter" placeholder="type part of the name"></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2 · What to draw</h2>
+    <div class="feat" id="features"></div>
+    <p class="hint"><span class="dot ready" style="display:inline-block"></span> data is on this computer &nbsp;
+       <span class="dot fetch" style="display:inline-block"></span> will be downloaded first</p>
+    <label class="f"><span>Main feature (leads the animation and the fact)</span><select id="primary"></select></label>
+    <div id="countryFraming">
+      <label class="f"><span>Amount of detail: <b id="densityVal">1.0</b>×</span>
+        <input type="range" id="density" min="0.4" max="2.5" step="0.1" value="1" style="width:100%"></label>
+    </div>
+    <div id="cityFraming" class="hidden">
+      <label class="f"><span>How much of the city to show</span></label>
+      <div class="seg" id="windowMode">
+        <label><input type="radio" name="windowMode" value="budget" checked><span>By street length</span></label>
+        <label><input type="radio" name="windowMode" value="radius"><span>Fixed size</span></label>
+      </div>
+      <label class="f" id="budgetField"><span>Kilometres of street in view (more = larger area)</span><input type="number" id="budget_km" value="350" min="50" step="50"></label>
+      <label class="f hidden" id="radiusField"><span>Half-width of the view in km</span><input type="number" id="radius_km" value="2" min="0.3" step="0.1"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3 · What to make</h2>
+    <div class="seg" id="outputs">
+      <label><input type="radio" name="outputs" value="video" checked><span>Video</span></label>
+      <label><input type="radio" name="outputs" value="engrave"><span>Engraving files (SVG + PNG)</span></label>
+      <label><input type="radio" name="outputs" value="both"><span>Both</span></label>
+    </div>
+  </div>
+
+  <div class="card" id="videoCard">
+    <h2>Video</h2>
+    <label class="f"><span>Style</span></label>
+    <div class="seg" id="style"></div>
+    <div id="outsideBlock">
+      <label class="f"><span>Around the country</span></label>
+      <div class="seg" id="outside">
+        <label><input type="radio" name="outside" value="keep" checked><span>Show neighbours (shape hidden)</span></label>
+        <label><input type="radio" name="outside" value="dim"><span>Dim neighbours</span></label>
+        <label><input type="radio" name="outside" value="cut"><span>Country only</span></label>
+      </div>
+    </div>
+    <div class="row">
+      <label class="f"><span>Animation</span><select id="reveal"></select></label>
+      <label class="f"><span>Length in seconds</span><input type="number" id="duration" value="15" min="4" max="90" step="1"></label>
+    </div>
+    <div class="row">
+      <label class="f"><span>Size</span><select id="size">
+        <option value="1080x1920">1080 × 1920 (Reels, TikTok, Shorts)</option>
+        <option value="720x1280">720 × 1280 (smaller file)</option>
+        <option value="2160x3840">2160 × 3840 (4K)</option></select></label>
+      <label class="f"><span>Slow zoom</span><select id="zoom"><option value="0.05">On</option><option value="0">Off</option></select></label>
+    </div>
+    <details>
+      <summary>Text and music</summary>
+      <label class="f"><span>Question (use | for a second line)</span><input type="text" id="question" placeholder="Which country|is this?"></label>
+      <label class="f"><span>Hint under the question</span><input type="text" id="hint" placeholder="made automatically"></label>
+      <div class="row">
+        <label class="f"><span>Name shown as the answer</span><input type="text" id="answer" placeholder="the place's name"></label>
+        <label class="f"><span>Fact under the answer</span><input type="text" id="fact" placeholder="made automatically"></label>
+      </div>
+      <label class="f"><span>Music file on this computer (full path)</span><input type="text" id="audio" placeholder="none: silent"></label>
+    </details>
+  </div>
+
+  <div class="card hidden" id="engraveCard">
+    <h2>Engraving</h2>
+    <div class="row3">
+      <label class="f"><span>Width in mm</span><input type="number" id="width_mm" value="200" min="20" step="5"></label>
+      <label class="f"><span>Margin in mm</span><input type="number" id="margin_mm" value="5" min="0" step="1"></label>
+      <label class="f"><span>Thinnest line in mm</span><input type="number" id="min_line_mm" value="0.3" min="0.05" step="0.05"></label>
+    </div>
+    <p class="hint">The width includes the margin on both sides. The height follows from the shape and is shown with the result.</p>
+    <label class="f"><span>Lines</span></label>
+    <div class="seg" id="lines">
+      <label><input type="radio" name="lines" value="outline" checked><span>As areas to fill-engrave</span></label>
+      <label><input type="radio" name="lines" value="centerline"><span>As single paths to score</span></label>
+    </div>
+    <details>
+      <summary>More</summary>
+      <div class="row">
+        <label class="f"><span>Line width multiplier</span><input type="number" id="line_scale" value="1" min="0.2" step="0.1"></label>
+        <label class="f"><span>PNG resolution (dpi)</span><input type="number" id="dpi" value="508" min="100" step="1"></label>
+      </div>
+      <label class="f" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="contour_in_layers"> Draw the contour in every layer file</label>
+      <label class="f" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mirror"> Mirror left-right (for the back of clear material)</label>
+    </details>
+  </div>
+
+  <div class="card">
+    <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" id="ingest" checked> Download missing data automatically</label>
+    <button class="primary" type="button" id="make">Make it</button>
+  </div>
+</form>
+
+<section>
+  <div class="card">
+    <h2>Progress</h2>
+    <p id="status">Nothing running.</p>
+    <pre id="log"></pre>
+  </div>
+  <div class="card">
+    <h2>Result</h2>
+    <div id="result"><p class="empty">Your video and engraving files will appear here.</p></div>
+  </div>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const radio = name => document.querySelector(`input[name=${name}]:checked`).value;
+const api = async (path, body) => {
+  const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : undefined);
+  return r.json();
+};
+const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + " M" : Math.round(n / 1e3) + " k";
+let META, COUNTRIES = [], CITY_COUNTRIES = [], CITIES = [], featureTimer = null, pollTimer = null;
+
+function option(value, text) { const o = document.createElement("option"); o.value = value; o.textContent = text; return o; }
+function fill(select, items, keep) {
+  const prev = keep ? select.value : null;
+  select.replaceChildren(...items.map(([v, t]) => option(v, t)));
+  if (prev && items.some(([v]) => v === prev)) select.value = prev;
+}
+
+function kind() { return radio("kind"); }
+
+function refreshPlace() {
+  const k = kind(), isCity = k === "city";
+  $("cityRow").classList.toggle("hidden", !isCity);
+  $("cityFraming").classList.toggle("hidden", !isCity);
+  $("countryFraming").classList.toggle("hidden", isCity);
+  $("outsideBlock").classList.toggle("hidden", isCity);
+  $("question").placeholder = `Which ${k}|is this?`;
+  const needList = isCity && !META.have_cities;
+  $("cityNotice").classList.toggle("hidden", !needList);
+  $("placePickers").classList.toggle("hidden", needList);
+  if (needList) return;
+  const source = isCity ? CITY_COUNTRIES : COUNTRIES;
+  const continents = [...new Set(source.map(c => c.continent))].sort();
+  fill($("continent"), [["", "All continents"], ...continents.map(c => [c, c])], true);
+  refreshCountries();
+}
+
+function refreshCountries() {
+  const isCity = kind() === "city", cont = $("continent").value;
+  const source = (isCity ? CITY_COUNTRIES : COUNTRIES).filter(c => !cont || c.continent === cont);
+  fill($("country"), source.map(c => isCity ? [c.name, `${c.name} (${c.cities})`] : [c.iso3, c.name]), true);
+  if (!$("country").value && source.length) $("country").selectedIndex = 0;
+  if (!isCity && !$("country").dataset.touched) {
+    const ch = source.find(c => c.iso3 === "CHE"); if (ch) $("country").value = "CHE";
+  }
+  isCity ? loadCities() : refreshFeatures();
+}
+
+async function loadCities() {
+  const country = $("country").value;
+  if (!country) return;
+  const list = await api("/api/cities?country=" + encodeURIComponent(country));
+  if (country !== $("country").value || kind() !== "city") return;      // a newer choice was made meanwhile
+  CITIES = Array.isArray(list) ? list : [];
+  $("cityFilter").value = "";
+  showCities();
+}
+
+function showCities() {
+  const f = $("cityFilter").value.trim().toLowerCase();
+  const list = CITIES.filter(c => !f || c.name.toLowerCase().includes(f));
+  fill($("city"), list.map(c => [c.name, `${c.name} — ${fmt(c.population)} people`]));
+  $("cityCount").textContent = `(${list.length} of ${CITIES.length})`;
+  refreshFeatures();
+}
+
+function target() { return kind() === "city" ? $("city").value : $("country").value; }
+
+function drawFeatures(status) {
+  const k = kind(), defaults = META.default_features[k];
+  const prev = new Map([...document.querySelectorAll("#features input")].map(i => [i.value, i.checked]));
+  const sameKind = $("features").dataset.kind === k;
+  $("features").dataset.kind = k;
+  $("features").replaceChildren(...META.features[k].map(f => {
+    const st = status && status.find(s => s.name === f.name);
+    const l = document.createElement("label");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.value = f.name;
+    cb.checked = sameKind && prev.has(f.name) ? prev.get(f.name) : defaults.includes(f.name);
+    cb.onchange = refreshPrimary;
+    const dot = document.createElement("span"); dot.className = "dot" + (st ? (st.ready ? " ready" : " fetch") : "");
+    dot.title = st ? (st.ready ? "on this computer" : "will be downloaded") : "";
+    const t = document.createElement("span"); t.textContent = f.label[0].toUpperCase() + f.label.slice(1);
+    l.append(cb, dot, t); return l;
+  }));
+  refreshPrimary();
+}
+
+function refreshPrimary() {
+  const k = kind(), checked = [...document.querySelectorAll("#features input:checked")].map(i => i.value);
+  const labels = Object.fromEntries(META.features[k].map(f => [f.name, f.label]));
+  const lead = META.default_features[k];                    // the usual main feature first: streets before water
+  checked.sort((a, b) => (lead.includes(a) ? lead.indexOf(a) : 99) - (lead.includes(b) ? lead.indexOf(b) : 99));
+  fill($("primary"), checked.map(n => [n, labels[n]]), true);
+}
+
+function refreshFeatures() {
+  drawFeatures(null);
+  clearTimeout(featureTimer);
+  const k = kind(), t = target();
+  if (!t) return;
+  featureTimer = setTimeout(async () => {
+    const q = `/api/features?kind=${k}&target=${encodeURIComponent(t)}` + (k === "city" ? `&country=${encodeURIComponent($("country").value)}` : "");
+    const st = await api(q);
+    if (Array.isArray(st) && k === kind() && t === target()) drawFeatures(st);
+  }, 250);
+}
+
+function refreshOutputs() {
+  const o = radio("outputs");
+  $("videoCard").classList.toggle("hidden", o === "engrave");
+  $("engraveCard").classList.toggle("hidden", o === "video");
+}
+
+function settings() {
+  const k = kind(), o = radio("outputs");
+  const checked = [...document.querySelectorAll("#features input:checked")].map(i => i.value);
+  const primary = $("primary").value;
+  const s = {features: [primary, ...checked.filter(f => f !== primary)].filter(Boolean)};
+  if (k === "city") {
+    s.country = $("country").value;
+    if (radio("windowMode") === "radius") s.radius_km = +$("radius_km").value; else s.budget_km = +$("budget_km").value;
+  } else s.density = +$("density").value;
+  if (o !== "engrave") {
+    Object.assign(s, {style: radio("style"), reveal: $("reveal").value, duration: +$("duration").value, size: $("size").value, zoom: +$("zoom").value});
+    if (k === "country") s.outside = radio("outside");
+    for (const id of ["question", "hint", "answer", "fact", "audio"]) if ($(id).value.trim()) s[id] = $(id).value.trim();
+  }
+  if (o !== "video") {
+    for (const id of ["width_mm", "margin_mm", "min_line_mm", "line_scale", "dpi"]) s[id] = +$(id).value;
+    s.dpi = Math.round(s.dpi); s.lines = radio("lines");
+    s.contour_in_layers = $("contour_in_layers").checked; s.mirror = $("mirror").checked;
+  }
+  return s;
+}
+
+function setStatus(text, cls) { $("status").textContent = text; $("status").className = cls || ""; }
+
+function watch(id, onDone) {
+  clearInterval(pollTimer);
+  const tick = async () => {
+    const job = await api("/api/job/" + id);
+    $("log").textContent = (job.log || []).join("\n");
+    $("log").scrollTop = $("log").scrollHeight;
+    if (job.state === "running") return setStatus("Working on " + job.title + " …");
+    clearInterval(pollTimer);
+    $("make").disabled = false; $("getCities").disabled = false;
+    if (job.state === "failed") return setStatus("That did not work: " + job.error, "failed");
+    setStatus("Done.", "done"); onDone(job.result);
+  };
+  pollTimer = setInterval(tick, 700); tick();
+}
+
+function el(tag, props, ...kids) { const e = Object.assign(document.createElement(tag), props || {}); e.append(...kids); return e; }
+
+function showResult(r) {
+  const box = $("result"), bust = "?t=" + Date.now();
+  box.replaceChildren();
+  const wrap = el("div", {className: r.video && r.engrave ? "results" : ""});
+  if (r.video) {
+    const v = el("video", {src: r.video + bust, controls: true, loop: true, autoplay: true, muted: true, playsInline: true, poster: r.cover + bust});
+    wrap.append(el("div", {}, v, el("p", {className: "hint"}, "On-screen credit: " + r.credit),
+      el("p", {}, el("a", {href: r.video, download: "video.mp4", textContent: "Download video"}))));
+  }
+  if (r.engrave) {
+    const e = r.engrave;
+    const grid = el("div", {className: "layers"}, ...e.layers.map(l => el("div", {className: "layer"},
+      el("img", {src: l.png + bust, alt: l.name + " layer", loading: "lazy"}), el("div", {className: "name", textContent: l.name}),
+      el("a", {href: l.svg, download: l.name + ".svg", textContent: "SVG"}), el("a", {href: l.png, download: l.name + ".png", textContent: "PNG"}))));
+    wrap.append(el("div", {}, el("p", {style: "margin-top:0"},
+      el("b", {textContent: `Engraving size: ${e.canvas_mm[0].toFixed(1)} × ${e.canvas_mm[1].toFixed(1)} mm`}), ` (map scale ${e.scale})`), grid));
+  }
+  const open = el("button", {type: "button", textContent: "Open the folder"});
+  open.onclick = () => api("/api/open-folder", {folder: r.folder});
+  box.append(wrap, el("p", {style: "margin:14px 0 4px"}, open), el("p", {className: "path", textContent: r.folder}));
+}
+
+async function make() {
+  const t = target();
+  if (!t) return setStatus("Choose a place first.", "failed");
+  if (!document.querySelector("#features input:checked")) return setStatus("Tick at least one thing to draw.", "failed");
+  const o = radio("outputs");
+  setStatus("Starting …");
+  const res = await api("/api/make", {kind: kind(), target: t, outputs: o === "both" ? ["video", "engrave"] : [o],
+                                      settings: settings(), ingest_missing: $("ingest").checked});
+  if (res.error) return setStatus(res.error, "failed");
+  $("make").disabled = true; $("log").textContent = "";
+  watch(res.id, showResult);
+}
+
+async function init() {
+  META = await api("/api/meta");
+  COUNTRIES = await api("/api/countries");
+  if (META.have_cities) CITY_COUNTRIES = await api("/api/city-countries");
+  const rgb = c => `rgb(${c.map(v => Math.round(v * 255)).join(",")})`;
+  $("style").replaceChildren(...META.styles.map((s, i) => {
+    const l = el("label"); const inp = el("input", {type: "radio", name: "style", value: s.name, checked: i === 0});
+    const sw = el("span", {className: "swatch"}); sw.style.background = `linear-gradient(135deg, ${rgb(s.bg)} 55%, ${rgb(s.fg)} 55%)`;
+    l.append(inp, el("span", {}, sw, s.name)); return l;
+  }));
+  const revealNames = {auto: "Automatic", network: "Grow along the network", rank: "Most important first", radial: "Outward from the centre", sweep: "West to east"};
+  fill($("reveal"), META.reveals.map(r => [r, revealNames[r] || r]));
+  document.querySelectorAll("input[name=kind]").forEach(i => i.onchange = refreshPlace);
+  document.querySelectorAll("input[name=outputs]").forEach(i => i.onchange = refreshOutputs);
+  document.querySelectorAll("input[name=windowMode]").forEach(i => i.onchange = () => {
+    $("budgetField").classList.toggle("hidden", radio("windowMode") !== "budget");
+    $("radiusField").classList.toggle("hidden", radio("windowMode") !== "radius");
+  });
+  $("continent").onchange = refreshCountries;
+  $("country").onchange = () => { $("country").dataset.touched = "1"; kind() === "city" ? loadCities() : refreshFeatures(); };
+  $("city").onchange = refreshFeatures;
+  $("cityFilter").oninput = showCities;
+  $("density").oninput = () => $("densityVal").textContent = (+$("density").value).toFixed(1);
+  $("make").onclick = make;
+  $("getCities").onclick = async () => {
+    const res = await api("/api/download-cities", {});
+    if (res.error) return setStatus(res.error, "failed");
+    $("getCities").disabled = true;
+    watch(res.id, async () => { META = await api("/api/meta"); CITY_COUNTRIES = await api("/api/city-countries"); refreshPlace(); });
+  };
+  refreshPlace(); refreshOutputs();
+}
+init();
+</script>
+</body>
+</html>
